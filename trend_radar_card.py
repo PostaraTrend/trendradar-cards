@@ -73,24 +73,27 @@ F_REG    = "Poppins-Regular.ttf"
 
 # ---- background -----------------------------------------------------------
 def background():
-    """Navy vertical gradient + radial radar-green glow top-right (matches the SOP page)."""
-    top = np.array(NAVY, dtype=float)
-    bot = np.array(NAVY2, dtype=float)
-    yy = np.linspace(0, 1, H2)[:, None, None]
-    grad = top[None, None, :] * (1 - yy) + bot[None, None, :] * yy  # H,1,3
-    grad = np.repeat(grad, W2, axis=1)
+    """Navy vertical gradient + radial radar-green glow top-right.
+    Memory-light: float32 + broadcasting (no full-size repeat) so it fits a 512MB instance."""
+    top = np.array(NAVY, dtype=np.float32)
+    bot = np.array(NAVY2, dtype=np.float32)
+    g = np.array((24, 224, 160), dtype=np.float32)
 
-    # radial glow
-    cx, cy = int(W2 * 0.82), int(H2 * -0.05)
-    yg, xg = np.mgrid[0:H2, 0:W2]
-    d = np.sqrt((xg - cx) ** 2 + (yg - cy) ** 2)
+    yy = np.linspace(0, 1, H2, dtype=np.float32)[:, None]       # (H2,1)
+    base = top[None, :] * (1 - yy) + bot[None, :] * yy          # (H2,3)
+
+    cx, cy = W2 * 0.82, H2 * -0.05
+    xs = np.arange(W2, dtype=np.float32)[None, :]               # (1,W2)
+    ys = np.arange(H2, dtype=np.float32)[:, None]               # (H2,1)
     r = W2 * 0.95
-    glow = np.clip(1 - d / r, 0, 1) ** 2.2
-    g = np.array((24, 224, 160), dtype=float)
-    grad += glow[..., None] * g[None, None, :] * 0.14
+    glow = np.clip(1 - np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2) / r, 0, 1) ** 2.2  # (H2,W2)
 
-    arr = np.clip(grad, 0, 255).astype(np.uint8)
-    return Image.fromarray(arr, "RGB")
+    arr = glow[:, :, None] * (g[None, None, :] * 0.14)          # (H2,W2,3)
+    del glow
+    arr += base[:, None, :]
+    del base
+    np.clip(arr, 0, 255, out=arr)
+    return Image.fromarray(arr.astype(np.uint8), "RGB")
 
 def radar_overlay(img):
     """A crisp radar dial anchored bottom-right as the brand device, plus a soft glow."""
