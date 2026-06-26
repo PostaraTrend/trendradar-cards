@@ -4,5 +4,5 @@ services:
     runtime: python
     plan: starter          # always-on; avoids cold-start image-fetch failures
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1
     healthCheckPath: /
