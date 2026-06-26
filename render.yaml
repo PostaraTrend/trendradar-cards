@@ -1,21 +1,8 @@
-# Trend Radar NG — Headline Card Render Service
-
-Renders an on-brand PNG news card from a headline. One service serves all four
-lanes; only the `category` param changes per lane.
-
-## Deploy to Render (one time)
-1. Put this folder in a GitHub repo (e.g. `trendradar-cards`).
-2. Render -> New -> Blueprint -> pick the repo (uses `render.yaml`).
-   Or New -> Web Service -> Python -> Build `pip install -r requirements.txt`,
-   Start `gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2`.
-3. Keep plan = **Starter** (always-on). Free tier sleeps and can fail the
-   image fetch on cold start.
-4. After deploy, open `https://<your-app>.onrender.com/` -> should say `ok`.
-
-## Test
-Open in a browser:
-`https://<your-app>.onrender.com/card?headline=Naira+firms+against+the+dollar&source=Nairametrics&category=ECONOMY`
-
-## Params
-headline (required) · source (required) · category (POLITICS|ENTERTAINMENT|EPL|ECONOMY)
-· date (default today) · handle (default fb.com/TrendRadarNG)
+services:
+  - type: web
+    name: trendradar-cards
+    runtime: python
+    plan: starter          # always-on; avoids cold-start image-fetch failures
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2
+    healthCheckPath: /
