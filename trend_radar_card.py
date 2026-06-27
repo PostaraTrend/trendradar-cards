@@ -32,6 +32,10 @@ _FONT_FALLBACKS = {
     "Poppins-SemiBold.ttf":  ["Poppins-Medium.ttf", "Poppins-Bold.ttf"],
     "Poppins-Medium.ttf":    ["Poppins-Regular.ttf", "Poppins-Bold.ttf"],
     "Poppins-Regular.ttf":   ["Poppins-Medium.ttf"],
+    # Noto Sans carries Yoruba glyphs (Ṣ ọ ẹ + tone marks); if it ever fails to
+    # upload, degrade to Poppins rather than crash (English still renders).
+    "NotoSans-Bold.ttf":     ["Poppins-Bold.ttf"],
+    "NotoSans-Regular.ttf":  ["Poppins-Regular.ttf"],
 }
 
 # ---- brand ----------------------------------------------------------------
@@ -51,6 +55,7 @@ LANE_ACCENT = {
     "EPL":           (110, 168, 255),  # sky
     "FOOTBALL":      (110, 168, 255),
     "ECONOMY":       (48, 200, 184),   # teal
+    "GOSPEL":        (181, 152, 255),  # warm violet
 }
 
 SCALE = 2
@@ -70,6 +75,36 @@ F_XBOLD  = "Poppins-ExtraBold.ttf"
 F_SEMI   = "Poppins-SemiBold.ttf"
 F_MED    = "Poppins-Medium.ttf"
 F_REG    = "Poppins-Regular.ttf"
+
+# Noto Sans fallback — Poppins lacks the Yoruba dot-below letters (Ṣ ọ ẹ) and
+# combining tone marks, which otherwise render as tofu boxes. We switch a text
+# element to Noto ONLY when it actually contains those characters, so plain
+# English headlines keep the Poppins brand look.
+F_NOTO_BOLD = "NotoSans-Bold.ttf"
+F_NOTO_REG  = "NotoSans-Regular.ttf"
+
+_NOTO_FOR = {
+    F_BOLD:  F_NOTO_BOLD, F_XBOLD: F_NOTO_BOLD, F_SEMI: F_NOTO_BOLD,
+    F_MED:   F_NOTO_REG,  F_REG:   F_NOTO_REG,
+}
+
+def _needs_noto(text):
+    """True if the string has characters Poppins cannot render (Yoruba etc.)."""
+    for ch in text or "":
+        cp = ord(ch)
+        if 0x0300 <= cp <= 0x036F:      # combining diacritical marks (tone)
+            return True
+        if 0x1E00 <= cp <= 0x1EFF:      # Latin Extended Additional (Ṣ Ẹ Ọ …)
+            return True
+        if cp >= 0x0250:                # anything past Latin Extended-B
+            return True
+    return False
+
+def font_for(text, name, size):
+    """Pick Noto Sans for this text if it needs it, else the requested Poppins."""
+    if _needs_noto(text):
+        return font(_NOTO_FOR.get(name, F_NOTO_REG), size)
+    return font(name, size)
 
 # ---- background -----------------------------------------------------------
 def background():
@@ -140,16 +175,18 @@ def wrap_to_width(draw, text, fnt, max_w):
     return lines
 
 def fit_headline(draw, text, max_w, max_h, start=84, min_size=46):
-    """Pick the largest Poppins-Bold size whose wrapped block fits the box."""
+    """Pick the largest Bold size whose wrapped block fits the box.
+    Uses Noto Sans Bold instead of Poppins Bold when the headline needs it."""
+    head_name = F_NOTO_BOLD if _needs_noto(text) else F_BOLD
     size = start
     while size >= min_size:
-        fnt = font(F_BOLD, size)
+        fnt = font(head_name, size)
         lines = wrap_to_width(draw, text, fnt, max_w)
         lh = (fnt.getbbox("Ag")[3] - fnt.getbbox("Ag")[1]) * 1.16
         if len(lines) * lh <= max_h and len(lines) <= 6:
             return fnt, lines, lh
         size -= 3
-    fnt = font(F_BOLD, min_size)
+    fnt = font(head_name, min_size)
     lines = wrap_to_width(draw, text, fnt, max_w)
     lh = (fnt.getbbox("Ag")[3] - fnt.getbbox("Ag")[1]) * 1.16
     return fnt, lines, lh
@@ -257,8 +294,8 @@ def build_card(headline, source, category="POLITICS", date_str="",
         y += lh
 
     # --- source chip ---
-    f_src = font(F_MED, 26)
     src_text = f"According to {source}"
+    f_src = font_for(src_text, F_MED, 26)
     chip_pad = 30 * SCALE
     chip_h = 74 * SCALE
     chip_w = d.textlength(src_text, font=f_src) + chip_pad * 2 + 26 * SCALE

@@ -12,7 +12,7 @@ POST /card        -> same, accepts JSON body
 Query params / JSON keys (all optional except headline):
   headline   (required)  the article title  -> selector's selected_title
   source     (required)  outlet name        -> e.g. "Premium Times"
-  category               POLITICS | ENTERTAINMENT | EPL | ECONOMY  (default POLITICS)
+  category               POLITICS | ENTERTAINMENT | EPL | ECONOMY | GOSPEL  (default POLITICS)
   date                   e.g. "26 Jun 2026"  (default: today, server TZ)
   handle                 footer handle       (default fb.com/TrendRadarNG)
 
@@ -36,7 +36,7 @@ from trend_radar_card import build_card
 app = Flask(__name__)
 
 MAX_HEADLINE = 240          # guardrail
-ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY"}
+ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL"}
 
 
 def _params(src):
