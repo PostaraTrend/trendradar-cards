@@ -47,6 +47,7 @@ GREEN  = (24, 224, 160)
 GREEN_D= (24, 160, 120)
 INK    = (238, 246, 255)
 MUTE   = (154, 176, 203)
+GOLD   = (231, 196, 132)   # warm gold — gospel cross-glow accent
 
 # per-lane accent for the small category tag (brand stays green overall)
 LANE_ACCENT = {
@@ -129,6 +130,105 @@ def background():
     del base
     np.clip(arr, 0, 255, out=arr)
     return Image.fromarray(arr.astype(np.uint8), "RGB")
+
+def gospel_background():
+    """Original night-sky render: warm glow rising behind a cross on a hill,
+    deep indigo→violet sky with a faint nebula band. Memory-light float32."""
+    top = np.array((12, 14, 36), dtype=np.float32)
+    bot = np.array((30, 24, 52), dtype=np.float32)
+    yy = np.linspace(0, 1, H2, dtype=np.float32)[:, None]
+    base = top[None, :] * (1 - yy) + bot[None, :] * yy
+
+    xs = np.arange(W2, dtype=np.float32)[None, :]
+    ys = np.arange(H2, dtype=np.float32)[:, None]
+
+    # warm glow rising from behind the cross (lower-centre-right)
+    gx, gy = W2 * 0.64, H2 * 0.80
+    rg = H2 * 0.60
+    glow = np.clip(1 - np.sqrt((xs - gx) ** 2 + (ys - gy) ** 2) / rg, 0, 1) ** 2.2
+    gold = np.array((250, 196, 120), dtype=np.float32)
+    arr = base[:, None, :] + glow[:, :, None] * (gold[None, None, :] * 0.26)
+    del glow
+
+    # faint violet nebula band on the diagonal (milky-way feel)
+    dist = np.abs(ys - (-0.5 * xs + H2 * 0.52)) / (H2 * 0.5)
+    neb = np.clip(1 - dist, 0, 1) ** 3.0
+    violet = np.array((150, 120, 190), dtype=np.float32)
+    arr += neb[:, :, None] * (violet[None, None, :] * 0.09)
+    del neb, dist
+
+    np.clip(arr, 0, 255, out=arr)
+    return Image.fromarray(arr.astype(np.uint8), "RGB")
+
+
+def gospel_overlay(img):
+    """Stars + reinforced halo + dark hill + rim-lit cross + footer scrim."""
+    import random as _r
+    base = img.convert("RGBA")
+    cx = int(W2 * 0.64)
+    hill_y = int(H2 * 0.84)
+
+    # reinforce the halo of light behind the cross
+    halo = Image.new("RGBA", (W2, H2), (0, 0, 0, 0))
+    hd = ImageDraw.Draw(halo)
+    halo_cy = int(H2 * 0.68)
+    hr = int(W2 * 0.26)
+    hd.ellipse([cx - hr, halo_cy - hr, cx + hr, halo_cy + hr], fill=(255, 205, 135, 110))
+    halo = halo.filter(ImageFilter.GaussianBlur(55 * SCALE))
+    base = Image.alpha_composite(base, halo)
+
+    # starfield (denser toward the top, avoids the bright glow)
+    stars = Image.new("RGBA", (W2, H2), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(stars)
+    _r.seed(11)
+    for _ in range(170):
+        x = _r.randint(0, W2)
+        y = _r.randint(0, int(H2 * 0.74))
+        rad = _r.choice([1, 1, 1, 2, 2, 3]) * (SCALE // 2 or 1)
+        a = _r.randint(30, 150)
+        sd.ellipse([x - rad, y - rad, x + rad, y + rad], fill=(255, 255, 255, a))
+    base = Image.alpha_composite(base, stars)
+
+    ov = Image.new("RGBA", (W2, H2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(ov)
+
+    # hill silhouette (smooth mound, highest under the cross)
+    pts = [(0, H2)]
+    for fx in [0.0, 0.12, 0.28, 0.45, 0.64, 0.8, 1.0]:
+        rise = math.exp(-((fx - 0.64) ** 2) / (2 * 0.20 ** 2))
+        py = int(H2 * 0.93 - (H2 * 0.93 - hill_y) * rise)
+        pts.append((int(W2 * fx), py))
+    pts.append((W2, H2))
+    d.polygon(pts, fill=(7, 8, 18, 255))
+
+    # cross silhouette, rim-lit gold
+    beam_w = int(W2 * 0.030)
+    cross_h = int(H2 * 0.26)
+    top_y = hill_y - cross_h
+    vx0, vx1 = cx - beam_w // 2, cx + beam_w // 2
+    arm_w = int(W2 * 0.125)
+    arm_y = top_y + int(cross_h * 0.30)
+    arm_h = beam_w
+    rim = max(2, 3 * SCALE // 2)
+    d.rectangle([vx0 - rim, top_y - rim, vx1 + rim, hill_y + rim], fill=(247, 205, 140, 210))
+    d.rectangle([cx - arm_w // 2 - rim, arm_y - rim, cx + arm_w // 2 + rim, arm_y + arm_h + rim],
+                fill=(247, 205, 140, 210))
+    d.rectangle([vx0, top_y, vx1, hill_y], fill=(10, 10, 18, 255))
+    d.rectangle([cx - arm_w // 2, arm_y, cx + arm_w // 2, arm_y + arm_h], fill=(10, 10, 18, 255))
+
+    base = Image.alpha_composite(base, ov)
+
+    # bottom scrim so the footer text stays legible over the hill
+    scrim = Image.new("RGBA", (W2, H2), (0, 0, 0, 0))
+    sc = ImageDraw.Draw(scrim)
+    sh = int(H2 * 0.16)
+    for i in range(sh):
+        a = int(150 * (i / sh))
+        sc.line([(0, H2 - sh + i), (W2, H2 - sh + i)], fill=(6, 7, 16, a))
+    base = Image.alpha_composite(base, scrim)
+
+    return base.convert("RGB")
+
 
 def radar_overlay(img):
     """A crisp radar dial anchored bottom-right as the brand device, plus a soft glow."""
@@ -238,9 +338,16 @@ def build_card(headline, source, category="POLITICS", date_str="",
     """Render and return the final 1080x1350 PIL Image (no disk write)."""
     category = category.upper()
     accent = LANE_ACCENT.get(category, GREEN)
+    is_gospel = (category == "GOSPEL")
+    chip_accent = GOLD if is_gospel else accent
+    handle_col = GOLD if is_gospel else GREEN
 
-    img = background()
-    img = radar_overlay(img)
+    if is_gospel:
+        img = gospel_background()
+        img = gospel_overlay(img)
+    else:
+        img = background()
+        img = radar_overlay(img)
     d = ImageDraw.Draw(img)
 
     # --- top: brand pill ---
@@ -304,7 +411,7 @@ def build_card(headline, source, category="POLITICS", date_str="",
             fill=PANEL, outline=LINE, width=2 * SCALE)
     # green accent bar
     d.rectangle([PAD, chip_y + 14 * SCALE, PAD + 6 * SCALE, chip_y + chip_h - 14 * SCALE],
-                fill=accent)
+                fill=chip_accent)
     src_ty = chip_y + (chip_h - (f_src.getbbox("Ag")[3] - f_src.getbbox("Ag")[1])) // 2 - 4 * SCALE
     d.text((PAD + chip_pad + 14 * SCALE, src_ty), src_text, font=f_src, fill=INK)
 
@@ -312,7 +419,7 @@ def build_card(headline, source, category="POLITICS", date_str="",
     foot_y = H2 - PAD - 38 * SCALE
     d.line([PAD, foot_y - 26 * SCALE, W2 - PAD, foot_y - 26 * SCALE], fill=LINE, width=2 * SCALE)
     f_hand = font(F_SEMI, 22)
-    d.text((PAD, foot_y), handle, font=f_hand, fill=GREEN)
+    d.text((PAD, foot_y), handle, font=f_hand, fill=handle_col)
     f_tag = font(F_REG, 19)
     tag = "Nigeria, curated."
     tagw = d.textlength(tag, font=f_tag)
