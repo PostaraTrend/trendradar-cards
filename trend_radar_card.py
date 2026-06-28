@@ -350,38 +350,20 @@ def build_card(headline, source, category="POLITICS", date_str="",
         img = radar_overlay(img)
     d = ImageDraw.Draw(img)
 
-    # --- top: brand pill ---
-    f_kick = font(F_BOLD, 21)
-    label = "TREND RADAR NG"
-    tw = tracked_width(d, label, f_kick, 3)
-    pill_h = 58 * SCALE
-    pill_w = tw + 96 * SCALE
+    # (No brand pill: the page header already shows "Trend Radar NG" above every
+    #  post, so the category line now leads the card.)
     py = PAD
-    rounded(d, [PAD, py, PAD + pill_w, py + pill_h], 30, fill=GREEN)
-    # radar mark (small navy dial inside the green pill)
-    mcx = PAD + 38 * SCALE
-    mcy = py + pill_h // 2
-    mr = 15 * SCALE
-    d.ellipse([mcx - mr, mcy - mr, mcx + mr, mcy + mr], outline=NAVY, width=3)
-    d.ellipse([mcx - mr*0.55, mcy - mr*0.55, mcx + mr*0.55, mcy + mr*0.55], outline=NAVY, width=3)
-    import math as _mm
-    _a = _mm.radians(-40)
-    d.line([mcx, mcy, mcx + mr*_mm.cos(_a), mcy + mr*_mm.sin(_a)], fill=NAVY, width=3)
-    d.ellipse([mcx + mr*0.5 - 3*SCALE, mcy - mr*0.45 - 3*SCALE,
-               mcx + mr*0.5 + 3*SCALE, mcy - mr*0.45 + 3*SCALE], fill=NAVY)
-    ty = py + (pill_h - (f_kick.getbbox("A")[3] - f_kick.getbbox("A")[1])) // 2 - 6 * SCALE
-    tracked(d, (PAD + 62 * SCALE, ty), label, f_kick, NAVY, 3)
 
     # date (right)
     if date_str:
         f_date = font(F_MED, 20)
         dw = d.textlength(date_str, font=f_date)
-        d.text((W2 - PAD - dw, py + 14 * SCALE), date_str, font=f_date, fill=MUTE)
+        d.text((W2 - PAD - dw, py + 2 * SCALE), date_str, font=f_date, fill=MUTE)
 
-    # --- category line ---
+    # --- category line (leads the card) ---
     f_cat = font(F_SEMI, 22)
     cat_label = f"{category} \u00b7 NIGERIA"
-    cat_y = py + pill_h + 34 * SCALE
+    cat_y = py
     tracked(d, (PAD, cat_y), cat_label, f_cat, accent, 4)
     # accent rule under category
     rule_y = cat_y + 50 * SCALE
