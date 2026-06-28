@@ -430,34 +430,43 @@ def build_card(headline, source, category="POLITICS", date_str="",
 
 
 
-# ---- wisdom lane ----------------------------------------------------------
-def _wisdom_fit(d, text, bold, max_w, max_h, start, min_size,
-                line_mult=1.22, max_lines=6):
-    """Largest size whose wrapped block fits the box. Noto-aware for the original."""
-    if bold:
-        name = F_NOTO_BOLD if _needs_noto(text) else F_BOLD
-        size = start
-        while size >= min_size:
-            fnt = font(name, size)
-            lines = wrap_to_width(d, text, fnt, max_w)
-            lh = (fnt.getbbox("Ag")[3] - fnt.getbbox("Ag")[1]) * line_mult
-            if len(lines) * lh <= max_h and len(lines) <= max_lines:
-                return fnt, lines, lh
-            size -= 3
-        fnt = font(name, min_size)
-    else:
-        size = start
-        while size >= min_size:
-            fnt = font_for(text, F_MED, size)
-            lines = wrap_to_width(d, text, fnt, max_w)
-            lh = (fnt.getbbox("Ag")[3] - fnt.getbbox("Ag")[1]) * line_mult
-            if len(lines) * lh <= max_h and len(lines) <= max_lines:
-                return fnt, lines, lh
-            size -= 3
-        fnt = font_for(text, F_MED, min_size)
-    lines = wrap_to_width(d, text, fnt, max_w)
-    lh = (fnt.getbbox("Ag")[3] - fnt.getbbox("Ag")[1]) * line_mult
-    return fnt, lines, lh
+# ---- wisdom lane (parchment heritage design) ------------------------------
+# West African earth palette: parchment, terracotta, ochre, adire indigo.
+W_CREAM  = (245, 234, 212)
+W_TERRA  = (176, 84, 52)
+W_TERRA_D= (138, 62, 40)
+W_OCHRE  = (201, 147, 58)
+W_BROWN  = (54, 38, 26)
+W_BROWNM = (120, 92, 68)
+W_INDIGO = (40, 56, 104)
+
+
+def _parchment():
+    """Aged parchment ground: warm cream, soft vignette, faint paper grain."""
+    base = np.zeros((H2, W2, 3), np.float32)
+    base[:] = np.array(W_CREAM, np.float32)
+    vy, vx = np.ogrid[0:H2, 0:W2]
+    dv = np.sqrt((vx - W2 / 2) ** 2 + (vy - H2 / 2) ** 2) / (0.72 * math.hypot(W2 / 2, H2 / 2))
+    base *= (1 - 0.14 * np.clip(dv, 0, 1)[:, :, None])
+    rng = np.random.default_rng(7)
+    base += rng.normal(0, 5.0, (H2, W2, 1)).astype(np.float32)
+    np.clip(base, 0, 255, out=base)
+    return Image.fromarray(base.astype(np.uint8), "RGB")
+
+
+def _tri_band(d, x0, x1, y, h, cols):
+    """A textile-style band of alternating up/down triangles."""
+    w = int(h * 0.86)
+    x = x0
+    i = 0
+    while x < x1:
+        c = cols[i % len(cols)]
+        if i % 2 == 0:
+            d.polygon([(x, y + h), (x + w, y + h), (x + w / 2, y)], fill=c)
+        else:
+            d.polygon([(x, y), (x + w, y), (x + w / 2, y + h)], fill=c)
+        x += w
+        i += 1
 
 
 def _wisdom_centered(d, lines, fnt, lh, y, fill, cx):
@@ -468,74 +477,88 @@ def _wisdom_centered(d, lines, fnt, lh, y, fill, cx):
     return y
 
 
+def _wfit(d, text, get_font, max_w, max_h, start, min_size, mult=1.2, max_lines=6):
+    size = start
+    while size >= min_size:
+        f = get_font(size)
+        lines = wrap_to_width(d, text, f, max_w)
+        lh = (f.getbbox("Ag")[3] - f.getbbox("Ag")[1]) * mult
+        if len(lines) * lh <= max_h and len(lines) <= max_lines:
+            return f, lines, lh
+        size -= 3
+    f = get_font(min_size)
+    lines = wrap_to_width(d, text, f, max_w)
+    lh = (f.getbbox("Ag")[3] - f.getbbox("Ag")[1]) * mult
+    return f, lines, lh
+
+
 def build_wisdom_card(proverb, meaning, language="", date_str="",
                       handle="fb.com/TrendRadarNG", **_ignored):
-    """Render and return the final 1080x1350 PIL Image for a Wisdom-lane proverb.
-    Extra kwargs (image_class, image_url) are accepted and ignored, so the same
-    call still works once a photo variant is added later."""
-    accent = GOLD                      # wisdom identity: warm gold
-    img = background()
-    img = radar_overlay(img)
-    d = ImageDraw.Draw(img)
+    """Parchment heritage card for the Wisdom lane. Proverb in Noto Sans (carries
+    the dot-below marks), warm West African palette, textile motif and banner.
+    Extra kwargs (image_class, image_url) accepted and ignored."""
+    img = _parchment()
+    d = ImageDraw.Draw(img, "RGBA")
     cx = W2 // 2
+    m = 70 * SCALE
 
-    # --- brand pill (same device as the news cards) ---
-    f_kick = font(F_BOLD, 21)
-    label = "TREND RADAR NG"
-    tw = tracked_width(d, label, f_kick, 3)
-    pill_h = 58 * SCALE
-    pill_w = tw + 96 * SCALE
-    py = PAD
-    rounded(d, [PAD, py, PAD + pill_w, py + pill_h], 30, fill=GREEN)
-    mcx = PAD + 38 * SCALE
-    mcy = py + pill_h // 2
-    mr = 15 * SCALE
-    d.ellipse([mcx - mr, mcy - mr, mcx + mr, mcy + mr], outline=NAVY, width=3)
-    d.ellipse([mcx - mr*0.55, mcy - mr*0.55, mcx + mr*0.55, mcy + mr*0.55], outline=NAVY, width=3)
-    import math as _mm
-    _a = _mm.radians(-40)
-    d.line([mcx, mcy, mcx + mr*_mm.cos(_a), mcy + mr*_mm.sin(_a)], fill=NAVY, width=3)
-    ty = py + (pill_h - (f_kick.getbbox("A")[3] - f_kick.getbbox("A")[1])) // 2 - 6 * SCALE
-    tracked(d, (PAD + 62 * SCALE, ty), label, f_kick, NAVY, 3)
+    # decorative double frame
+    d.rectangle([m, m, W2 - m, H2 - m], outline=W_TERRA, width=5 * SCALE)
+    d.rectangle([m + 10 * SCALE, m + 10 * SCALE, W2 - m - 10 * SCALE, H2 - m - 10 * SCALE],
+                outline=W_OCHRE, width=2 * SCALE)
+    bh = 22 * SCALE
+    _tri_band(d, m + 24 * SCALE, W2 - m - 24 * SCALE, m + 26 * SCALE, bh, [W_TERRA, W_INDIGO, W_OCHRE])
+    _tri_band(d, m + 24 * SCALE, W2 - m - 24 * SCALE, H2 - m - 26 * SCALE - bh, bh, [W_OCHRE, W_INDIGO, W_TERRA])
 
-    # --- category line: LANGUAGE \u00b7 WISDOM (centered) ---
-    f_cat = font(F_SEMI, 22)
-    cat_label = f"{(language or 'PROVERB').upper()} \u00b7 WISDOM"
-    cat_w = tracked_width(d, cat_label, f_cat, 4)
-    cat_y = py + pill_h + 40 * SCALE
-    tracked(d, (cx - cat_w / 2, cat_y), cat_label, f_cat, accent, 4)
-    rule_y = cat_y + 52 * SCALE
-    d.rectangle([cx - 35 * SCALE, rule_y, cx + 35 * SCALE, rule_y + 5 * SCALE], fill=accent)
+    # banner: language tag
+    by = m + 90 * SCALE
+    f_b = font(F_BOLD, 24)
+    lab = f"{(language or 'PROVERB').upper()}  \u00b7  WISDOM"
+    lw = tracked_width(d, lab, f_b, 4)
+    bw = lw + 120 * SCALE
+    bx0 = cx - bw / 2
+    bh2 = 66 * SCALE
+    d.polygon([(bx0, by), (bx0 + bw, by), (bx0 + bw, by + bh2),
+               (cx, by + bh2 + 18 * SCALE), (bx0, by + bh2)], fill=W_TERRA)
+    bty = by + (bh2 - (f_b.getbbox("A")[3] - f_b.getbbox("A")[1])) // 2 - 2 * SCALE
+    tracked(d, (cx - lw / 2, bty), lab, f_b, W_CREAM, 4)
 
-    # --- hero: proverb (big) + meaning (lighter), centered as a block ---
-    region_top = rule_y + 40 * SCALE
-    region_bot = H2 - PAD - 150 * SCALE
-    max_w = W2 - 2 * PAD
-
-    pf, plines, plh = _wisdom_fit(d, proverb, True, max_w, (region_bot - region_top) * 0.62,
-                                  start=92, min_size=44, line_mult=1.22, max_lines=6)
-    mf, mlines, mlh = _wisdom_fit(d, meaning, False, max_w, (region_bot - region_top) * 0.30,
-                                  start=40, min_size=26, line_mult=1.3, max_lines=4)
-
-    gap = 46 * SCALE
-    block_h = len(plines) * plh + gap + len(mlines) * mlh
-    y = region_top + ((region_bot - region_top) - block_h) / 2
-
-    y = _wisdom_centered(d, plines, pf, plh, y, INK, cx)
-    rmid = y + gap / 2 - 3 * SCALE
-    d.rectangle([cx - 28 * SCALE, rmid, cx + 28 * SCALE, rmid + 4 * SCALE], fill=accent)
+    # proverb (Noto) + meaning (Poppins), centered block
+    rt = by + bh2 + 110 * SCALE
+    rb = H2 - m - 230 * SCALE
+    max_w = W2 - 2 * (m + 50 * SCALE)
+    pf, pl, plh = _wfit(d, proverb, lambda s: font(F_NOTO_BOLD, s), max_w, (rb - rt) * 0.55, 80, 42, 1.18, 5)
+    mf, ml, mlh = _wfit(d, meaning, lambda s: font(F_MED, s), max_w, (rb - rt) * 0.28, 38, 24, 1.3, 4)
+    gap = 64 * SCALE
+    block_h = len(pl) * plh + gap + len(ml) * mlh
+    y = rt + ((rb - rt) - block_h) / 2
+    y = _wisdom_centered(d, pl, pf, plh, y, W_BROWN, cx)
+    rm = y + gap / 2 - 6 * SCALE
+    ds = 14 * SCALE
+    for k, col in enumerate([W_OCHRE, W_TERRA, W_OCHRE]):
+        dx = cx + (k - 1) * 42 * SCALE
+        d.polygon([(dx, rm), (dx + ds, rm + ds), (dx, rm + 2 * ds), (dx - ds, rm + ds)], fill=col)
     y += gap
-    _wisdom_centered(d, mlines, mf, mlh, y, MUTE, cx)
+    _wisdom_centered(d, ml, mf, mlh, y, W_BROWNM, cx)
 
-    # --- footer (same as news cards) ---
-    foot_y = H2 - PAD - 38 * SCALE
-    d.line([PAD, foot_y - 26 * SCALE, W2 - PAD, foot_y - 26 * SCALE], fill=LINE, width=2 * SCALE)
-    f_hand = font(F_SEMI, 22)
-    d.text((PAD, foot_y), handle, font=f_hand, fill=GREEN)
-    f_tag = font(F_REG, 19)
-    tag = "Wisdom, curated."
-    tagw = d.textlength(tag, font=f_tag)
-    d.text((W2 - PAD - tagw, foot_y + 2 * SCALE), tag, font=f_tag, fill=MUTE)
+    # CTA pill (indigo, cream text)
+    cta = "FOLLOW FOR DAILY WISDOM"
+    fc = font(F_BOLD, 20)
+    ctw = tracked_width(d, cta, fc, 3)
+    px = 44 * SCALE
+    pw = ctw + px * 2
+    ph = 58 * SCALE
+    x0 = cx - pw / 2
+    y0 = H2 - m - 160 * SCALE
+    rounded(d, [x0, y0, x0 + pw, y0 + ph], 29, fill=W_INDIGO)
+    cty = y0 + (ph - (fc.getbbox("A")[3] - fc.getbbox("A")[1])) // 2 - 4 * SCALE
+    tracked(d, (x0 + px, cty), cta, fc, W_CREAM, 3)
+
+    # footer handle
+    fy = H2 - m - 80 * SCALE
+    fh = font(F_SEMI, 21)
+    hw = d.textlength(handle, font=fh)
+    d.text((cx - hw / 2, fy), handle, font=fh, fill=W_INDIGO)
 
     return img.resize((W, H), Image.LANCZOS)
 
