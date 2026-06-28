@@ -57,6 +57,7 @@ LANE_ACCENT = {
     "FOOTBALL":      (110, 168, 255),
     "ECONOMY":       (48, 200, 184),   # teal
     "GOSPEL":        (181, 152, 255),  # warm violet
+    "DIASPORA":      (255, 138, 76),   # coral
 }
 
 SCALE = 2

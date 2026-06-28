@@ -36,7 +36,7 @@ from trend_radar_card import build_card, build_wisdom_card
 app = Flask(__name__)
 
 MAX_HEADLINE = 240          # guardrail
-ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL"}
+ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA"}
 
 
 def _params(src):
