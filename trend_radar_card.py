@@ -429,6 +429,117 @@ def build_card(headline, source, category="POLITICS", date_str="",
     return out
 
 
+
+# ---- wisdom lane ----------------------------------------------------------
+def _wisdom_fit(d, text, bold, max_w, max_h, start, min_size,
+                line_mult=1.22, max_lines=6):
+    """Largest size whose wrapped block fits the box. Noto-aware for the original."""
+    if bold:
+        name = F_NOTO_BOLD if _needs_noto(text) else F_BOLD
+        size = start
+        while size >= min_size:
+            fnt = font(name, size)
+            lines = wrap_to_width(d, text, fnt, max_w)
+            lh = (fnt.getbbox("Ag")[3] - fnt.getbbox("Ag")[1]) * line_mult
+            if len(lines) * lh <= max_h and len(lines) <= max_lines:
+                return fnt, lines, lh
+            size -= 3
+        fnt = font(name, min_size)
+    else:
+        size = start
+        while size >= min_size:
+            fnt = font_for(text, F_MED, size)
+            lines = wrap_to_width(d, text, fnt, max_w)
+            lh = (fnt.getbbox("Ag")[3] - fnt.getbbox("Ag")[1]) * line_mult
+            if len(lines) * lh <= max_h and len(lines) <= max_lines:
+                return fnt, lines, lh
+            size -= 3
+        fnt = font_for(text, F_MED, min_size)
+    lines = wrap_to_width(d, text, fnt, max_w)
+    lh = (fnt.getbbox("Ag")[3] - fnt.getbbox("Ag")[1]) * line_mult
+    return fnt, lines, lh
+
+
+def _wisdom_centered(d, lines, fnt, lh, y, fill, cx):
+    for ln in lines:
+        w = d.textlength(ln, font=fnt)
+        d.text((cx - w / 2, y), ln, font=fnt, fill=fill)
+        y += lh
+    return y
+
+
+def build_wisdom_card(proverb, meaning, language="", date_str="",
+                      handle="fb.com/TrendRadarNG", **_ignored):
+    """Render and return the final 1080x1350 PIL Image for a Wisdom-lane proverb.
+    Extra kwargs (image_class, image_url) are accepted and ignored, so the same
+    call still works once a photo variant is added later."""
+    accent = GOLD                      # wisdom identity: warm gold
+    img = background()
+    img = radar_overlay(img)
+    d = ImageDraw.Draw(img)
+    cx = W2 // 2
+
+    # --- brand pill (same device as the news cards) ---
+    f_kick = font(F_BOLD, 21)
+    label = "TREND RADAR NG"
+    tw = tracked_width(d, label, f_kick, 3)
+    pill_h = 58 * SCALE
+    pill_w = tw + 96 * SCALE
+    py = PAD
+    rounded(d, [PAD, py, PAD + pill_w, py + pill_h], 30, fill=GREEN)
+    mcx = PAD + 38 * SCALE
+    mcy = py + pill_h // 2
+    mr = 15 * SCALE
+    d.ellipse([mcx - mr, mcy - mr, mcx + mr, mcy + mr], outline=NAVY, width=3)
+    d.ellipse([mcx - mr*0.55, mcy - mr*0.55, mcx + mr*0.55, mcy + mr*0.55], outline=NAVY, width=3)
+    import math as _mm
+    _a = _mm.radians(-40)
+    d.line([mcx, mcy, mcx + mr*_mm.cos(_a), mcy + mr*_mm.sin(_a)], fill=NAVY, width=3)
+    ty = py + (pill_h - (f_kick.getbbox("A")[3] - f_kick.getbbox("A")[1])) // 2 - 6 * SCALE
+    tracked(d, (PAD + 62 * SCALE, ty), label, f_kick, NAVY, 3)
+
+    # --- category line: LANGUAGE \u00b7 WISDOM (centered) ---
+    f_cat = font(F_SEMI, 22)
+    cat_label = f"{(language or 'PROVERB').upper()} \u00b7 WISDOM"
+    cat_w = tracked_width(d, cat_label, f_cat, 4)
+    cat_y = py + pill_h + 40 * SCALE
+    tracked(d, (cx - cat_w / 2, cat_y), cat_label, f_cat, accent, 4)
+    rule_y = cat_y + 52 * SCALE
+    d.rectangle([cx - 35 * SCALE, rule_y, cx + 35 * SCALE, rule_y + 5 * SCALE], fill=accent)
+
+    # --- hero: proverb (big) + meaning (lighter), centered as a block ---
+    region_top = rule_y + 40 * SCALE
+    region_bot = H2 - PAD - 150 * SCALE
+    max_w = W2 - 2 * PAD
+
+    pf, plines, plh = _wisdom_fit(d, proverb, True, max_w, (region_bot - region_top) * 0.62,
+                                  start=92, min_size=44, line_mult=1.22, max_lines=6)
+    mf, mlines, mlh = _wisdom_fit(d, meaning, False, max_w, (region_bot - region_top) * 0.30,
+                                  start=40, min_size=26, line_mult=1.3, max_lines=4)
+
+    gap = 46 * SCALE
+    block_h = len(plines) * plh + gap + len(mlines) * mlh
+    y = region_top + ((region_bot - region_top) - block_h) / 2
+
+    y = _wisdom_centered(d, plines, pf, plh, y, INK, cx)
+    rmid = y + gap / 2 - 3 * SCALE
+    d.rectangle([cx - 28 * SCALE, rmid, cx + 28 * SCALE, rmid + 4 * SCALE], fill=accent)
+    y += gap
+    _wisdom_centered(d, mlines, mf, mlh, y, MUTE, cx)
+
+    # --- footer (same as news cards) ---
+    foot_y = H2 - PAD - 38 * SCALE
+    d.line([PAD, foot_y - 26 * SCALE, W2 - PAD, foot_y - 26 * SCALE], fill=LINE, width=2 * SCALE)
+    f_hand = font(F_SEMI, 22)
+    d.text((PAD, foot_y), handle, font=f_hand, fill=GREEN)
+    f_tag = font(F_REG, 19)
+    tag = "Wisdom, curated."
+    tagw = d.textlength(tag, font=f_tag)
+    d.text((W2 - PAD - tagw, foot_y + 2 * SCALE), tag, font=f_tag, fill=MUTE)
+
+    return img.resize((W, H), Image.LANCZOS)
+
+
 if __name__ == "__main__":
     samples = [
         dict(headline="Jigawa approves N405 billion 2026 budget with priority on roads and primary healthcare",

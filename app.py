@@ -31,7 +31,7 @@ from io import BytesIO
 from datetime import datetime
 import os
 
-from trend_radar_card import build_card
+from trend_radar_card import build_card, build_wisdom_card
 
 app = Flask(__name__)
 
@@ -48,6 +48,15 @@ def _params(src):
     date_str = (src.get("date") or "").strip() or datetime.now().strftime("%-d %b %Y")
     handle = (src.get("handle") or "fb.com/TrendRadarNG").strip()
     return headline, source, category, date_str, handle
+
+
+def _wisdom_params(src):
+    proverb  = (src.get("proverb_original") or src.get("proverb") or "").strip()
+    meaning  = (src.get("meaning") or "").strip()
+    language = (src.get("language") or "").strip()
+    date_str = (src.get("date") or "").strip()
+    handle   = (src.get("handle") or "fb.com/TrendRadarNG").strip()
+    return proverb, meaning, language, date_str, handle
 
 
 @app.get("/")
@@ -68,6 +77,22 @@ def card():
     buf.seek(0)
     return send_file(buf, mimetype="image/png",
                      download_name="trendradar_card.png")
+
+
+@app.route("/wisdom", methods=["GET", "POST"])
+def wisdom():
+    src = request.get_json(silent=True) or request.values
+    proverb, meaning, language, date_str, handle = _wisdom_params(src)
+    if not proverb:
+        return Response('{"error":"proverb_original is required"}', status=400,
+                        mimetype="application/json")
+    img = build_wisdom_card(proverb, meaning, language, date_str, handle)
+    buf = BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png",
+                     download_name="trendradar_wisdom.png")
+
 
 
 if __name__ == "__main__":
