@@ -1,0 +1,36 @@
+# ============================================================
+# CHANGE 1 — update the import line near the top of app.py
+# Replace:
+#     from trend_radar_card import build_card, build_wisdom_card
+# With:
+# ============================================================
+from trend_radar_card import build_card, build_wisdom_card, build_reflection_card
+
+
+# ============================================================
+# CHANGE 2 — add this params helper next to _wisdom_params(...)
+# ============================================================
+def _reflection_params(src):
+    theme    = (src.get("theme_title") or "").strip()
+    quote    = (src.get("pull_quote") or "").strip()
+    date_str = (src.get("date") or "").strip()
+    handle   = (src.get("handle") or "fb.com/TrendRadarNG").strip()
+    return theme, quote, date_str, handle
+
+
+# ============================================================
+# CHANGE 3 — add this route next to the @app.route("/wisdom") block
+# ============================================================
+@app.route("/reflection", methods=["GET", "POST"])
+def reflection():
+    src = request.get_json(silent=True) or request.values
+    theme, quote, date_str, handle = _reflection_params(src)
+    if not quote:
+        return Response('{"error":"pull_quote is required"}', status=400,
+                        mimetype="application/json")
+    img = build_reflection_card(theme, quote, date_str, handle)
+    buf = BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png",
+                     download_name="trendradar_reflection.png")
