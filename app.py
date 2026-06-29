@@ -10,6 +10,7 @@ GET/POST /reflection  -> reflection-lane card (binary PNG)
 from flask import Flask, request, send_file, Response
 from io import BytesIO
 from datetime import datetime
+import json as _json
 import os
 
 from trend_radar_card import build_card, build_wisdom_card, build_reflection_card
@@ -18,6 +19,24 @@ app = Flask(__name__)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA"}
+
+
+def _source(req):
+    """Return a dict of params from JSON body, raw JSON string, or form values.
+    n8n sometimes posts a body that Flask does not auto-parse into a dict, so we
+    parse defensively and always hand back something with .get()."""
+    data = req.get_json(silent=True)
+    if isinstance(data, dict):
+        return data
+    raw = req.get_data(as_text=True) or ""
+    if raw.strip():
+        try:
+            parsed = _json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return req.values
 
 
 def _params(src):
@@ -55,7 +74,7 @@ def health():
 
 @app.route("/card", methods=["GET", "POST"])
 def card():
-    src = request.get_json(silent=True) or request.values
+    src = _source(request)
     headline, source, category, date_str, handle = _params(src)
     if not headline:
         return Response('{"error":"headline is required"}', status=400,
@@ -70,7 +89,7 @@ def card():
 
 @app.route("/wisdom", methods=["GET", "POST"])
 def wisdom():
-    src = request.get_json(silent=True) or request.values
+    src = _source(request)
     proverb, meaning, language, date_str, handle = _wisdom_params(src)
     if not proverb:
         return Response('{"error":"proverb_original is required"}', status=400,
@@ -85,7 +104,7 @@ def wisdom():
 
 @app.route("/reflection", methods=["GET", "POST"])
 def reflection():
-    src = request.get_json(silent=True) or request.values
+    src = _source(request)
     theme, quote, date_str, handle = _reflection_params(src)
     if not quote:
         return Response('{"error":"pull_quote is required"}', status=400,
