@@ -1,13 +1,18 @@
 """
 Trend Radar NG — Headline Card Render Service
+=============================================
+GET  /            -> health check ("ok")
+GET/POST /card        -> news card (binary PNG)
+GET/POST /wisdom      -> wisdom-lane card (binary PNG)
+GET/POST /reflection  -> reflection-lane card (binary PNG)
 """
+
 from flask import Flask, request, send_file, Response
 from io import BytesIO
 from datetime import datetime
 import os
 
-from trend_radar_card import build_card, build_wisdom_card
-from reflection_card_render import build_reflection_card
+from trend_radar_card import build_card, build_wisdom_card, build_reflection_card
 
 app = Flask(__name__)
 
