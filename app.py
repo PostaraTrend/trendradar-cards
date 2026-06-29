@@ -1,41 +1,17 @@
 """
 Trend Radar NG — Headline Card Render Service
-=============================================
-Tiny web service that turns a headline into an on-brand PNG card.
-
-Endpoints
----------
-GET  /            -> health check ("ok")
-GET  /card        -> render a card, returns image/png
-POST /card        -> same, accepts JSON body
-
-Query params / JSON keys (all optional except headline):
-  headline   (required)  the article title  -> selector's selected_title
-  source     (required)  outlet name        -> e.g. "Premium Times"
-  category               POLITICS | ENTERTAINMENT | EPL | ECONOMY | GOSPEL  (default POLITICS)
-  date                   e.g. "26 Jun 2026"  (default: today, server TZ)
-  handle                 footer handle       (default fb.com/TrendRadarNG)
-
-Examples
---------
-  /card?headline=Naira+firms+against+the+dollar&source=Nairametrics&category=ECONOMY
-
-n8n usage (recommended, robust against cold starts):
-  1) HTTP Request node -> GET this /card URL with the params -> response = binary PNG
-  2) Facebook publish  -> POST /{page-id}/photos  (multipart: source=<binary>,
-     caption=<commentary>, published=true, access_token=<PAGE token>)
 """
-
 from flask import Flask, request, send_file, Response
 from io import BytesIO
 from datetime import datetime
 import os
 
 from trend_radar_card import build_card, build_wisdom_card
+from reflection_card_render import build_reflection_card
 
 app = Flask(__name__)
 
-MAX_HEADLINE = 240          # guardrail
+MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA"}
 
 
@@ -57,6 +33,14 @@ def _wisdom_params(src):
     date_str = (src.get("date") or "").strip()
     handle   = (src.get("handle") or "fb.com/TrendRadarNG").strip()
     return proverb, meaning, language, date_str, handle
+
+
+def _reflection_params(src):
+    theme    = (src.get("theme_title") or "").strip()
+    quote    = (src.get("pull_quote") or "").strip()
+    date_str = (src.get("date") or "").strip()
+    handle   = (src.get("handle") or "fb.com/TrendRadarNG").strip()
+    return theme, quote, date_str, handle
 
 
 @app.get("/")
@@ -93,6 +77,20 @@ def wisdom():
     return send_file(buf, mimetype="image/png",
                      download_name="trendradar_wisdom.png")
 
+
+@app.route("/reflection", methods=["GET", "POST"])
+def reflection():
+    src = request.get_json(silent=True) or request.values
+    theme, quote, date_str, handle = _reflection_params(src)
+    if not quote:
+        return Response('{"error":"pull_quote is required"}', status=400,
+                        mimetype="application/json")
+    img = build_reflection_card(theme, quote, date_str, handle)
+    buf = BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png",
+                     download_name="trendradar_reflection.png")
 
 
 if __name__ == "__main__":
