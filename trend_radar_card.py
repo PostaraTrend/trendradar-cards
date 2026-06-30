@@ -58,7 +58,7 @@ LANE_ACCENT = {
     "ECONOMY":       (48, 200, 184),   # teal
     "GOSPEL":        (181, 152, 255),  # warm violet
     "DIASPORA":      (255, 138, 76),   # coral
-  "TECH":          (26, 200, 214),   # electric cyan — Naija Tech
+    "TECH":          (26, 200, 214),   # electric cyan — Naija Tech
 }
 
 SCALE = 2
@@ -364,7 +364,7 @@ def build_card(headline, source, category="POLITICS", date_str="",
 
     # --- category line (leads the card) ---
     f_cat = font(F_SEMI, 22)
-   cat_label = "NAIJA TECH" if category == "TECH" else f"{category} \u00b7 NIGERIA"
+    cat_label = "NAIJA TECH" if category == "TECH" else f"{category} \u00b7 NIGERIA"
     cat_y = py
     tracked(d, (PAD, cat_y), cat_label, f_cat, accent, 4)
     # accent rule under category
@@ -615,6 +615,9 @@ if __name__ == "__main__":
         dict(headline="Osimhen on the scoresheet again as his side edge a five-goal thriller",
              source="Complete Sports", category="EPL", date_str="26 Jun 2026",
              out_path="outputs/card_epl.png"),
+        dict(headline="Ford rehires 350 veteran engineers after AI quality push falls short",
+             source="TechCabal", category="TECH", date_str="30 Jun 2026",
+             out_path="outputs/card_tech.png"),
     ]
     for s in samples:
         print("rendered", render_card(**s))
