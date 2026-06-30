@@ -58,6 +58,7 @@ LANE_ACCENT = {
     "ECONOMY":       (48, 200, 184),   # teal
     "GOSPEL":        (181, 152, 255),  # warm violet
     "DIASPORA":      (255, 138, 76),   # coral
+  "TECH":          (26, 200, 214),   # electric cyan — Naija Tech
 }
 
 SCALE = 2
@@ -363,7 +364,7 @@ def build_card(headline, source, category="POLITICS", date_str="",
 
     # --- category line (leads the card) ---
     f_cat = font(F_SEMI, 22)
-    cat_label = f"{category} \u00b7 NIGERIA"
+   cat_label = "NAIJA TECH" if category == "TECH" else f"{category} \u00b7 NIGERIA"
     cat_y = py
     tracked(d, (PAD, cat_y), cat_label, f_cat, accent, 4)
     # accent rule under category
