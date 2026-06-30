@@ -18,7 +18,7 @@ from trend_radar_card import build_card, build_wisdom_card, build_reflection_car
 app = Flask(__name__)
 
 MAX_HEADLINE = 240
-ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA"}
+ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA"TECH}
 
 
 def _source(req):
