@@ -1,9 +1,10 @@
 """
-Trend Radar NG - Headline Card Render Service
-GET  /            health check
-GET/POST /card        news card (binary PNG)
-GET/POST /wisdom      wisdom-lane card (binary PNG)
-GET/POST /reflection  reflection-lane card (binary PNG)
+Trend Radar NG — Headline Card Render Service
+=============================================
+GET  /            -> health check ("ok")
+GET/POST /card        -> news card (binary PNG)
+GET/POST /wisdom      -> wisdom-lane card (binary PNG)
+GET/POST /reflection  -> reflection-lane card (binary PNG)
 """
 
 from flask import Flask, request, send_file, Response
@@ -12,7 +13,7 @@ from datetime import datetime
 import json as _json
 import os
 
-from trend_radar_card import build_card, build_wisdom_card, build_reflection_card
+from trend_radar_card import build_card, build_wisdom_card, build_reflection_card, build_results_card
 
 app = Flask(__name__)
 
@@ -21,6 +22,9 @@ ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", 
 
 
 def _source(req):
+    """Return a dict of params from JSON body, raw JSON string, or form values.
+    n8n sometimes posts a body that Flask does not auto-parse into a dict, so we
+    parse defensively and always hand back something with .get()."""
     data = req.get_json(silent=True)
     if isinstance(data, dict):
         return data
@@ -47,19 +51,19 @@ def _params(src):
 
 
 def _wisdom_params(src):
-    proverb = (src.get("proverb_original") or src.get("proverb") or "").strip()
-    meaning = (src.get("meaning") or "").strip()
+    proverb  = (src.get("proverb_original") or src.get("proverb") or "").strip()
+    meaning  = (src.get("meaning") or "").strip()
     language = (src.get("language") or "").strip()
     date_str = (src.get("date") or "").strip()
-    handle = (src.get("handle") or "fb.com/TrendRadarNG").strip()
+    handle   = (src.get("handle") or "fb.com/TrendRadarNG").strip()
     return proverb, meaning, language, date_str, handle
 
 
 def _reflection_params(src):
-    theme = (src.get("theme_title") or "").strip()
-    quote = (src.get("pull_quote") or "").strip()
+    theme    = (src.get("theme_title") or "").strip()
+    quote    = (src.get("pull_quote") or "").strip()
     date_str = (src.get("date") or "").strip()
-    handle = (src.get("handle") or "fb.com/TrendRadarNG").strip()
+    handle   = (src.get("handle") or "fb.com/TrendRadarNG").strip()
     return theme, quote, date_str, handle
 
 
@@ -111,6 +115,37 @@ def reflection():
     buf.seek(0)
     return send_file(buf, mimetype="image/png",
                      download_name="trendradar_reflection.png")
+
+
+def _results_params(src):
+    title = (src.get("title") or "Results").strip()
+    date_str = (src.get("date") or "").strip()
+    handle = (src.get("handle") or "fb.com/TrendRadarNG").strip()
+    groups = src.get("groups")
+    if isinstance(groups, str):
+        try:
+            groups = _json.loads(groups)
+        except Exception:
+            groups = []
+    if not isinstance(groups, list):
+        groups = []
+    return title, groups, date_str, handle
+
+
+@app.route("/results", methods=["GET", "POST"])
+def results():
+    src = _source(request)
+    title, groups, date_str, handle = _results_params(src)
+    if not groups:
+        return Response('{"error":"groups is required"}', status=400,
+                        mimetype="application/json")
+    img = build_results_card(title, groups, date_str, handle)
+    buf = BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png",
+                     download_name="trendradar_results.png")
+
 
 
 if __name__ == "__main__":

@@ -601,6 +601,74 @@ def build_reflection_card(theme_title, pull_quote, date_str="",
     d.text((W2 - PAD - tagw, foot_y + 2 * SCALE), tag, font=f_tag, fill=MUTE)
 
     return img.resize((W, H), Image.LANCZOS)
+# ---- football results scoreboard lane ------------------------------------
+def build_results_card(title, groups, date_str="",
+                       handle="fb.com/TrendRadarNG", **_ignored):
+    """Football results card: a title plus score lines grouped by round,
+    on the navy radar brand with the FOOTBALL sky accent. groups is a list of
+    {"round": str, "matches": [str, ...]}. Extra kwargs accepted and ignored."""
+    accent = LANE_ACCENT.get("FOOTBALL", GREEN)
+    img = background()
+    img = radar_overlay(img)
+    d = ImageDraw.Draw(img)
+
+    py = PAD
+    if date_str:
+        f_date = font(F_MED, 20)
+        dw = d.textlength(date_str, font=f_date)
+        d.text((W2 - PAD - dw, py + 2 * SCALE), date_str, font=f_date, fill=MUTE)
+
+    # eyebrow
+    f_cat = font(F_SEMI, 22)
+    tracked(d, (PAD, py), "FOOTBALL \u00b7 RESULTS", f_cat, accent, 4)
+    rule_y = py + 50 * SCALE
+    d.rectangle([PAD, rule_y, PAD + 70 * SCALE, rule_y + 5 * SCALE], fill=accent)
+
+    # title
+    title_y = rule_y + 40 * SCALE
+    f_title = font(F_BOLD, 48)
+    for ln in wrap_to_width(d, title, f_title, W2 - 2 * PAD):
+        d.text((PAD, title_y), ln, font=f_title, fill=INK)
+        title_y += (f_title.getbbox("Ag")[3] - f_title.getbbox("Ag")[1]) * 1.15
+
+    # results list, grouped by round
+    y = title_y + 34 * SCALE
+    f_round = font(F_SEMI, 24)
+    round_gap = 20 * SCALE
+    line_gap = 12 * SCALE
+    bottom_limit = H2 - PAD - 96 * SCALE
+
+    for g in groups:
+        if y > bottom_limit:
+            break
+        rnd = (g.get("round") or "").strip()
+        if rnd:
+            d.text((PAD, y), rnd.upper(), font=f_round, fill=accent)
+            y += (f_round.getbbox("Ag")[3] - f_round.getbbox("Ag")[1]) + round_gap
+        for m in (g.get("matches") or []):
+            if y > bottom_limit:
+                break
+            fm = font_for(m, F_MED, 28)
+            for ml in wrap_to_width(d, m, fm, W2 - 2 * PAD):
+                if y > bottom_limit:
+                    break
+                d.text((PAD, y), ml, font=fm, fill=INK)
+                y += (fm.getbbox("Ag")[3] - fm.getbbox("Ag")[1]) + line_gap
+        y += round_gap
+
+    # footer
+    foot_y = H2 - PAD - 38 * SCALE
+    d.line([PAD, foot_y - 26 * SCALE, W2 - PAD, foot_y - 26 * SCALE], fill=LINE, width=2 * SCALE)
+    f_hand = font(F_SEMI, 22)
+    d.text((PAD, foot_y), handle, font=f_hand, fill=GREEN)
+    f_tag = font(F_REG, 19)
+    tag = "Results, curated."
+    tagw = d.textlength(tag, font=f_tag)
+    d.text((W2 - PAD - tagw, foot_y + 2 * SCALE), tag, font=f_tag, fill=MUTE)
+
+    return img.resize((W, H), Image.LANCZOS)
+
+
 if __name__ == "__main__":
     samples = [
         dict(headline="Jigawa approves N405 billion 2026 budget with priority on roads and primary healthcare",
