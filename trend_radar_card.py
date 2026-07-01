@@ -637,103 +637,131 @@ def build_results_card(title, groups, date_str="",
     """Football results card with country flags. groups is a list of
     {"round": str, "matches": [ {home, away, score, pen, home_flag, away_flag}, ... ]}.
     Falls back to text-only per row if a flag cannot be fetched. Also accepts
-    plain-string matches for backward compatibility."""
+    plain-string matches for backward compatibility. Type is scaled up and the
+    match block is distributed down the card so a light day (2-3 games) fills
+    the 4:5 frame, while a busy day tightens toward the minimum and still fits."""
     accent = LANE_ACCENT.get("FOOTBALL", GREEN)
     img = background()
     img = radar_overlay(img)
     img = img.convert("RGBA")
     d = ImageDraw.Draw(img)
 
+    def _h(fnt, sample="Ag"):
+        b = fnt.getbbox(sample)
+        return b[3] - b[1]
+
     py = PAD
     if date_str:
-        f_date = font(F_MED, 20)
+        f_date = font(F_MED, 24)
         dw = d.textlength(date_str, font=f_date)
-        d.text((W2 - PAD - dw, py + 2 * SCALE), date_str, font=f_date, fill=MUTE)
+        d.text((W2 - PAD - dw, py + 4 * SCALE), date_str, font=f_date, fill=MUTE)
 
-    f_cat = font(F_SEMI, 22)
-    tracked(d, (PAD, py), "FOOTBALL \u00b7 RESULTS", f_cat, accent, 4)
-    rule_y = py + 50 * SCALE
-    d.rectangle([PAD, rule_y, PAD + 70 * SCALE, rule_y + 5 * SCALE], fill=accent)
+    f_cat = font(F_SEMI, 30)
+    tracked(d, (PAD, py), "FOOTBALL \u00b7 RESULTS", f_cat, accent, 5)
+    rule_y = py + 62 * SCALE
+    d.rectangle([PAD, rule_y, PAD + 110 * SCALE, rule_y + 7 * SCALE], fill=accent)
 
-    title_y = rule_y + 40 * SCALE
-    f_title = font(F_BOLD, 48)
+    # Big, extra-bold title (wraps to as many lines as needed).
+    title_y = rule_y + 46 * SCALE
+    f_title = font(F_XBOLD, 96)
     for ln in wrap_to_width(d, title, f_title, W2 - 2 * PAD):
         d.text((PAD, title_y), ln, font=f_title, fill=INK)
-        title_y += (f_title.getbbox("Ag")[3] - f_title.getbbox("Ag")[1]) * 1.15
+        title_y += _h(f_title) * 1.06
 
-    y = title_y + 34 * SCALE
-    f_round = font(F_SEMI, 24)
-    f_row = font(F_MED, 30)
-    row_h = 46 * SCALE
-    flag_h = 30 * SCALE
-    round_gap = 18 * SCALE
-    bottom_limit = H2 - PAD - 96 * SCALE
+    # Scoreboard fonts (bigger + bolder than before).
+    name_sz = 46
+    f_round = font(F_SEMI, 36)
+    f_name0 = font(F_SEMI, name_sz)
+    f_score = font(F_XBOLD, 54)
+    f_pen   = font(F_REG, 30)
+    flag_h  = 54 * SCALE
 
+    name_line_h = _h(f_name0)
+    round_h     = _h(f_round)
+    pen_h       = _h(f_pen)
+    name_asc    = f_name0.getmetrics()[0]
+    score_dy    = name_asc - f_score.getmetrics()[0]   # baseline-align bigger score
+
+    # Minimum vertical space each element needs.
+    min_round = round_h + 20 * SCALE
+    min_match = max(name_line_h, flag_h) + 24 * SCALE
+    min_pen   = pen_h + 14 * SCALE
+
+    n_match = sum(len(g.get("matches") or []) for g in groups)
+    n_round = sum(1 for g in groups if (g.get("round") or "").strip())
+    n_pen   = sum(1 for g in groups for m in (g.get("matches") or [])
+                  if isinstance(m, dict) and m.get("pen"))
+
+    y0 = title_y + 30 * SCALE
+    y_bottom = H2 - PAD - 110 * SCALE
+    avail = y_bottom - y0
+    base = n_round * min_round + n_match * min_match + n_pen * min_pen
+
+    # Distribute leftover space as breathing room per match, capped so a single
+    # game does not become absurdly tall.
+    extra = min((avail - base) / n_match, 160 * SCALE) if (n_match and avail > base) else 0
+    match_slot = min_match + extra
+
+    y = y0
     for g in groups:
-        if y > bottom_limit:
+        if y > y_bottom:
             break
         rnd = (g.get("round") or "").strip()
         if rnd:
-            d.text((PAD, y), rnd.upper(), font=f_round, fill=accent)
-            y += (f_round.getbbox("Ag")[3] - f_round.getbbox("Ag")[1]) + round_gap
+            d.text((PAD, y + (min_round - round_h) / 2), rnd.upper(),
+                   font=f_round, fill=accent)
+            y += min_round
 
         for m in (g.get("matches") or []):
-            if y > bottom_limit:
+            if y > y_bottom:
                 break
 
-            # Backward-compat: allow a plain string.
+            # Backward-compat: allow a plain string row.
             if isinstance(m, str):
-                fm = font_for(m, F_MED, 28)
-                d.text((PAD, y), m, font=fm, fill=INK)
-                y += row_h
+                fm = font_for(m, F_SEMI, name_sz)
+                d.text((PAD, y + (match_slot - name_line_h) / 2), m,
+                       font=fm, fill=INK)
+                y += match_slot
                 continue
 
-            home = m.get("home", "")
-            away = m.get("away", "")
+            home  = m.get("home", "")
+            away  = m.get("away", "")
             score = m.get("score", "")
-            pen = m.get("pen", "")
+            pen   = m.get("pen", "")
 
             hf = _fetch_flag(m.get("home_flag"), flag_h)
             af = _fetch_flag(m.get("away_flag"), flag_h)
 
+            text_y = y + (match_slot - name_line_h) / 2
+            flag_y = y + (match_slot - flag_h) / 2
             x = PAD
-            mid_y = y + (row_h - flag_h) // 2
-            gap = 12 * SCALE
+            gap = 16 * SCALE
 
-            # home flag
             if hf is not None:
-                img.paste(hf, (int(x), int(mid_y)), hf)
+                img.paste(hf, (int(x), int(flag_y)), hf)
                 x += hf.width + gap
-            # home name
-            fh = font_for(home, F_MED, 30)
-            d.text((x, y), home, font=fh, fill=INK)
+
+            fh = font_for(home, F_SEMI, name_sz)
+            d.text((x, text_y), home, font=fh, fill=INK)
             x += d.textlength(home, font=fh) + gap
 
-            # score (accent, bold)
-            fs = font(F_BOLD, 30)
-            d.text((x, y), score, font=fs, fill=accent)
-            x += d.textlength(score, font=fs) + gap
+            d.text((x, text_y + score_dy), score, font=f_score, fill=accent)
+            x += d.textlength(score, font=f_score) + gap
 
-            # away name
-            fa = font_for(away, F_MED, 30)
-            d.text((x, y), away, font=fa, fill=INK)
+            fa = font_for(away, F_SEMI, name_sz)
+            d.text((x, text_y), away, font=fa, fill=INK)
             x += d.textlength(away, font=fa) + gap
 
-            # away flag
             if af is not None:
-                img.paste(af, (int(x), int(mid_y)), af)
+                img.paste(af, (int(x), int(flag_y)), af)
                 x += af.width + gap
 
-            # penalty note on the next line, muted, if present
+            y += match_slot
             if pen:
-                y += row_h
-                fp = font(F_REG, 22)
-                d.text((PAD, y), pen, font=fp, fill=MUTE)
-                y += int(row_h * 0.7)
-            else:
-                y += row_h
+                d.text((PAD + 8 * SCALE, y), pen, font=f_pen, fill=MUTE)
+                y += min_pen
 
-        y += round_gap
+        y += 10 * SCALE
 
     d = ImageDraw.Draw(img)  # refresh after pastes
     foot_y = H2 - PAD - 38 * SCALE
