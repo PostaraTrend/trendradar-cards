@@ -601,15 +601,47 @@ def build_reflection_card(theme_title, pull_quote, date_str="",
     d.text((W2 - PAD - tagw, foot_y + 2 * SCALE), tag, font=f_tag, fill=MUTE)
 
     return img.resize((W, H), Image.LANCZOS)
-# ---- football results scoreboard lane ------------------------------------
+# ---- football results scoreboard lane (with flags) -----------------------
+import urllib.request as _urlreq
+from io import BytesIO as _BytesIO
+
+_FLAG_CACHE = {}
+
+def _fetch_flag(url, target_h):
+    """Fetch and resize a flag/crest. Bulletproof: any failure returns None so
+    the row renders text-only rather than crashing. Cached per-render."""
+    if not url:
+        return None
+    key = (url, target_h)
+    if key in _FLAG_CACHE:
+        return _FLAG_CACHE[key]
+    try:
+        req = _urlreq.Request(url, headers={"User-Agent": "TrendRadarNG/1.0"})
+        with _urlreq.urlopen(req, timeout=3) as r:
+            data = r.read()
+        im = Image.open(_BytesIO(data)).convert("RGBA")
+        w, h = im.size
+        if h == 0:
+            return None
+        new_w = max(1, int(w * (target_h / h)))
+        im = im.resize((new_w, target_h), Image.LANCZOS)
+        _FLAG_CACHE[key] = im
+        return im
+    except Exception:
+        _FLAG_CACHE[key] = None
+        return None
+
+
 def build_results_card(title, groups, date_str="",
                        handle="fb.com/TrendRadarNG", **_ignored):
-    """Football results card: a title plus score lines grouped by round,
-    on the navy radar brand with the FOOTBALL sky accent. groups is a list of
-    {"round": str, "matches": [str, ...]}. Extra kwargs accepted and ignored."""
+    """Football results card with country flags. groups is a list of
+    {"round": str, "matches": [ {home, away, score, pen, home_flag, away_flag}, ... ]}.
+    Falls back to text-only per row if a flag cannot be fetched. Also accepts
+    plain-string matches for backward compatibility."""
     accent = LANE_ACCENT.get("FOOTBALL", GREEN)
     img = background()
     img = radar_overlay(img)
+    img = img.convert("RGBA")
     d = ImageDraw.Draw(img)
 
     py = PAD
@@ -618,24 +650,23 @@ def build_results_card(title, groups, date_str="",
         dw = d.textlength(date_str, font=f_date)
         d.text((W2 - PAD - dw, py + 2 * SCALE), date_str, font=f_date, fill=MUTE)
 
-    # eyebrow
     f_cat = font(F_SEMI, 22)
     tracked(d, (PAD, py), "FOOTBALL \u00b7 RESULTS", f_cat, accent, 4)
     rule_y = py + 50 * SCALE
     d.rectangle([PAD, rule_y, PAD + 70 * SCALE, rule_y + 5 * SCALE], fill=accent)
 
-    # title
     title_y = rule_y + 40 * SCALE
     f_title = font(F_BOLD, 48)
     for ln in wrap_to_width(d, title, f_title, W2 - 2 * PAD):
         d.text((PAD, title_y), ln, font=f_title, fill=INK)
         title_y += (f_title.getbbox("Ag")[3] - f_title.getbbox("Ag")[1]) * 1.15
 
-    # results list, grouped by round
     y = title_y + 34 * SCALE
     f_round = font(F_SEMI, 24)
-    round_gap = 20 * SCALE
-    line_gap = 12 * SCALE
+    f_row = font(F_MED, 30)
+    row_h = 46 * SCALE
+    flag_h = 30 * SCALE
+    round_gap = 18 * SCALE
     bottom_limit = H2 - PAD - 96 * SCALE
 
     for g in groups:
@@ -645,18 +676,66 @@ def build_results_card(title, groups, date_str="",
         if rnd:
             d.text((PAD, y), rnd.upper(), font=f_round, fill=accent)
             y += (f_round.getbbox("Ag")[3] - f_round.getbbox("Ag")[1]) + round_gap
+
         for m in (g.get("matches") or []):
             if y > bottom_limit:
                 break
-            fm = font_for(m, F_MED, 28)
-            for ml in wrap_to_width(d, m, fm, W2 - 2 * PAD):
-                if y > bottom_limit:
-                    break
-                d.text((PAD, y), ml, font=fm, fill=INK)
-                y += (fm.getbbox("Ag")[3] - fm.getbbox("Ag")[1]) + line_gap
+
+            # Backward-compat: allow a plain string.
+            if isinstance(m, str):
+                fm = font_for(m, F_MED, 28)
+                d.text((PAD, y), m, font=fm, fill=INK)
+                y += row_h
+                continue
+
+            home = m.get("home", "")
+            away = m.get("away", "")
+            score = m.get("score", "")
+            pen = m.get("pen", "")
+
+            hf = _fetch_flag(m.get("home_flag"), flag_h)
+            af = _fetch_flag(m.get("away_flag"), flag_h)
+
+            x = PAD
+            mid_y = y + (row_h - flag_h) // 2
+            gap = 12 * SCALE
+
+            # home flag
+            if hf is not None:
+                img.paste(hf, (int(x), int(mid_y)), hf)
+                x += hf.width + gap
+            # home name
+            fh = font_for(home, F_MED, 30)
+            d.text((x, y), home, font=fh, fill=INK)
+            x += d.textlength(home, font=fh) + gap
+
+            # score (accent, bold)
+            fs = font(F_BOLD, 30)
+            d.text((x, y), score, font=fs, fill=accent)
+            x += d.textlength(score, font=fs) + gap
+
+            # away name
+            fa = font_for(away, F_MED, 30)
+            d.text((x, y), away, font=fa, fill=INK)
+            x += d.textlength(away, font=fa) + gap
+
+            # away flag
+            if af is not None:
+                img.paste(af, (int(x), int(mid_y)), af)
+                x += af.width + gap
+
+            # penalty note on the next line, muted, if present
+            if pen:
+                y += row_h
+                fp = font(F_REG, 22)
+                d.text((PAD, y), pen, font=fp, fill=MUTE)
+                y += int(row_h * 0.7)
+            else:
+                y += row_h
+
         y += round_gap
 
-    # footer
+    d = ImageDraw.Draw(img)  # refresh after pastes
     foot_y = H2 - PAD - 38 * SCALE
     d.line([PAD, foot_y - 26 * SCALE, W2 - PAD, foot_y - 26 * SCALE], fill=LINE, width=2 * SCALE)
     f_hand = font(F_SEMI, 22)
@@ -666,7 +745,7 @@ def build_results_card(title, groups, date_str="",
     tagw = d.textlength(tag, font=f_tag)
     d.text((W2 - PAD - tagw, foot_y + 2 * SCALE), tag, font=f_tag, fill=MUTE)
 
-    return img.resize((W, H), Image.LANCZOS)
+    return img.convert("RGB").resize((W, H), Image.LANCZOS)
 
 
 if __name__ == "__main__":
