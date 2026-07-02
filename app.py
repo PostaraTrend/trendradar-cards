@@ -6,6 +6,7 @@ GET/POST /card        -> news card (binary PNG)
 GET/POST /wisdom      -> wisdom-lane card (binary PNG)
 GET/POST /reflection  -> reflection-lane card (binary PNG)
 GET/POST /health      -> health & wellness lane card (binary PNG)
+POST /render/newsstand -> News Stand & Weather Report lane card (binary PNG)
 """
 
 from flask import Flask, request, send_file, Response
@@ -16,8 +17,10 @@ import os
 
 from trend_radar_card import build_card, build_wisdom_card, build_reflection_card, build_results_card
 from health_card import render_health_card
+from newsstand_card import newsstand_bp
 
 app = Flask(__name__)
+app.register_blueprint(newsstand_bp)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
