@@ -1,0 +1,41 @@
+{
+  "page_config_row": {
+    "lane": "HEALTH",
+    "lane_display": "HEALTH & WELLNESS \u00b7 NIGERIA",
+    "active": true,
+    "publish_mode": "SOAK",
+    "accent_hex": "#2ECC8F",
+    "chip_prefix": "According to",
+    "footer_fb": "fb.com/TrendRadarNG",
+    "footer_ig": "@trendradarng",
+    "footer_tag": "Health, curated.",
+    "disclaimer": "Health information, curated. Always consult a professional.",
+    "schedule_cron": "0 7,15 * * *",
+    "max_posts_per_day": 2,
+    "dedup_window_days": 14,
+    "rss_feeds": [
+      {"name": "Premium Times Health", "url": "https://www.premiumtimesng.com/category/health/feed", "tier": 2, "verify": true},
+      {"name": "Nigeria Health Watch", "url": "https://nigeriahealthwatch.com/feed/", "tier": 2, "verify": true},
+      {"name": "TheCable Health", "url": "https://www.thecable.ng/category/health/feed", "tier": 2, "verify": true},
+      {"name": "WHO Africa News", "url": "https://www.afro.who.int/rss/featured-news.xml", "tier": 1, "verify": true},
+      {"name": "NCDC", "url": "SCRAPE_REQUIRED_ncdc.gov.ng/news", "tier": 1, "verify": true, "note": "No public RSS as of prep date; use Apify pattern from SOP-001B or check for feed at import"}
+    ]
+  },
+  "renderer_payload_template": {
+    "lane": "HEALTH",
+    "kicker": "HEALTH & WELLNESS \u00b7 NIGERIA",
+    "accent": "#2ECC8F",
+    "headline": "{{headline}}",
+    "source_chip": "According to {{source_name}}",
+    "date": "{{post_date}}",
+    "footer_left": "{{footer_by_platform}}",
+    "footer_right": "Health, curated. Always consult a professional.",
+    "size": "1080x1350"
+  },
+  "post_log_columns_no_change": true,
+  "notes": [
+    "publish_mode SOAK = pipeline runs end-to-end but FB publish node stays disabled; cards + captions land in the Review tab for one-tap manual posting (Phase A of the lane spec).",
+    "Set publish_mode to LIVE and enable the publish node to enter Phase B.",
+    "All rss_feeds URLs follow standard WordPress /feed patterns but are marked verify:true \u2014 confirm each returns XML on first import; swap or remove any that 404."
+  ]
+}
