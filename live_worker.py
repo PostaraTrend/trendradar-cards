@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 """
-Trend Radar NG - Live in-play worker v2 (World Cup + EPL)
-=========================================================
+Trend Radar NG - Live in-play worker v3 (Match Thread mode)
+===========================================================
 Always-on Render background worker, OUTSIDE n8n (no execution metering). Polls
-API-SPORTS for in-play fixtures and posts every major match event to the Trend
-Radar NG Facebook page as fast text alerts:
+API-SPORTS for in-play fixtures and narrates every major match event.
 
-  kick-off, goal, half-time, second-half, extra-time (start / half-time /
-  second half), end of extra time / to penalties, full-time (regulation, after
-  extra time, or on penalties), red card, missed penalty.
+NEW IN v3 - MATCH THREAD MODE (on by default):
+  - At kick-off the worker publishes ONE anchor feed post per match
+    ("MATCH THREAD ... Follow this post for live updates").
+  - Every subsequent event (goals, cards, half-time, extra time, penalties,
+    full-time) is published as a COMMENT on that anchor post, so the page feed
+    is not flooded and engagement concentrates on a single post.
+  - Selected big moments ALSO go to the feed (default: goals and full-time),
+    controlled by FEED_EVENTS.
+  - If the worker starts mid-match (no anchor yet), it creates the thread
+    lazily on the first event it sees, so coverage is never silently dropped.
+  - Set THREAD_MODE=false to get exact v2 behaviour (every event to the feed).
 
-Design notes:
+Carried over from v2:
   - One API call per cycle covers both leagues (live=1-39).
   - Status milestones fire on OBSERVED transitions, so a restart mid-match does
     not replay milestones that already passed.
-  - Finals (FT/AET/PEN) are caught after a match leaves the live feed, and are
-    RETRIED until the API marks the match final - so running just after a final
-    whistle no longer misses the result.
-  - Every event type has its own on/off env toggle so busy EPL Saturdays can be
-    quieted without a code change. A min-gap throttle spaces out posts.
+  - Finals (FT/AET/PEN) are caught after a match leaves the live feed and are
+    RETRIED until the API marks the match final.
+  - Per-event on/off env toggles; min-gap throttle between Graph API writes.
 
 Environment variables (set on the Render service):
   APISPORTS_KEY, FB_PAGE_TOKEN                       (required)
@@ -27,6 +32,11 @@ Environment variables (set on the Render service):
   RENDERER_URL  default the /results endpoint
   STATE_PATH    default /data/live_state.json
   POST_FT_CARDS default false  (worker posts FT text; digest owns the card)
+  THREAD_MODE   default true   (anchor post + comments)
+  FEED_EVENTS   default GOALS,FULLTIME
+                categories that ALSO post to the feed while in thread mode.
+                Valid: HALFTIME SECONDHALF EXTRATIME FULLTIME GOALS REDCARDS
+                       PENALTIES SHOOTOUT   (KICKOFF is always the anchor)
   Per-type toggles, all default true:
     POST_KICKOFF POST_HALFTIME POST_SECONDHALF POST_EXTRATIME
     POST_FULLTIME POST_GOALS POST_REDCARDS POST_PENALTIES POST_SHOOTOUT
@@ -47,6 +57,10 @@ LEAGUES       = os.environ.get("LIVE_LEAGUES", "1-39")
 RENDERER_URL  = os.environ.get("RENDERER_URL", "https://trendradar-cards.onrender.com/results")
 STATE_PATH    = os.environ.get("STATE_PATH", "/data/live_state.json")
 POST_FT_CARDS = os.environ.get("POST_FT_CARDS", "false").lower() == "true"
+THREAD_MODE   = os.environ.get("THREAD_MODE", "true").lower() == "true"
+FEED_EVENTS   = set(x.strip().upper() for x in
+                    os.environ.get("FEED_EVENTS", "GOALS,FULLTIME").split(",") if x.strip())
+
 
 def _flag(name):
     return os.environ.get(name, "true").lower() == "true"
@@ -71,6 +85,7 @@ POLL_IDLE    = 300
 MIN_POST_GAP = 8
 BACKOFF_429  = 90
 FINAL_MAX_TRIES = 40   # ~40 cycles to keep retrying a finished match's final
+MAX_THREADS     = 60   # anchor post ids kept in state
 
 
 def log(*a):
@@ -90,6 +105,7 @@ def load_state():
     s.setdefault("seen_live", [])       # fids live last cycle
     s.setdefault("ft_final", [])        # fids whose final was posted
     s.setdefault("pending_final", {})   # fid(str) -> attempts, awaiting final
+    s.setdefault("threads", {})         # fid(str) -> anchor post id
     return s
 
 
@@ -144,15 +160,36 @@ def _throttle():
 
 
 def post_text(message):
+    """Feed post. Returns the new post id on success, else None."""
     _throttle()
     try:
         r = requests.post(f"{GRAPH}/{FB_PAGE_ID}/feed",
                           data={"message": message, "access_token": FB_TOKEN}, timeout=20)
         ok = (r.status_code == 200)
         log("POSTED" if ok else f"FAIL {r.status_code} {r.text[:100]}", repr(message.split(chr(10))[0]))
-        return ok
+        if ok:
+            try:
+                return r.json().get("id")
+            except Exception:
+                return "unknown"
+        return None
     except Exception as e:
         log("WARN post_text failed:", e)
+        return None
+
+
+def post_comment(post_id, message):
+    """Comment on an existing post. Returns True on success."""
+    _throttle()
+    try:
+        r = requests.post(f"{GRAPH}/{post_id}/comments",
+                          data={"message": message, "access_token": FB_TOKEN}, timeout=20)
+        ok = (r.status_code == 200)
+        log("COMMENT" if ok else f"FAIL comment {r.status_code} {r.text[:100]}",
+            repr(message.split(chr(10))[0]))
+        return ok
+    except Exception as e:
+        log("WARN post_comment failed:", e)
         return False
 
 
@@ -221,6 +258,13 @@ def _lg(fx):
     return f"{lg['name']} \u00b7 {lg.get('round', '')}".rstrip(" \u00b7")
 
 
+def thread_anchor_message(fx):
+    home, away = _teams(fx)
+    return (f"\U0001F3DF MATCH THREAD\n{home} vs {away}\n{_lg(fx)}\n\n"
+            "Follow this post for live coverage. Every goal, card, and key "
+            "moment will appear in the comments as it happens.")
+
+
 def goal_message(fx, ev):
     home, away = _teams(fx)
     g = fx["goals"]
@@ -284,6 +328,41 @@ def final_message(fx, short):
     return f"\U0001F3C1 FULL-TIME\n{base}\n{lg}"
 
 
+# ---- publishing dispatcher -------------------------------------------------
+def ensure_thread(fid, fx, state):
+    """Return the anchor post id for this fixture, creating it if needed.
+    Returns None when thread mode is off or anchor creation failed."""
+    if not THREAD_MODE:
+        return None
+    tid = state["threads"].get(str(fid))
+    if tid:
+        return tid
+    pid = post_text(thread_anchor_message(fx))
+    if pid:
+        state["threads"][str(fid)] = pid
+        # prune oldest entries beyond cap (dict preserves insertion order)
+        while len(state["threads"]) > MAX_THREADS:
+            state["threads"].pop(next(iter(state["threads"])))
+        return pid
+    return None
+
+
+def publish_event(fid, fx, category, message, state):
+    """Route one event: comment on the match thread, plus feed when the
+    category is in FEED_EVENTS. Falls back to a feed post whenever no thread
+    is available. Returns True if the event went out on at least one surface."""
+    if not THREAD_MODE:
+        return post_text(message) is not None
+    tid = ensure_thread(fid, fx, state)
+    sent = False
+    if tid:
+        sent = post_comment(tid, message)
+    if category in FEED_EVENTS or not tid:
+        if post_text(message) is not None:
+            sent = True
+    return sent
+
+
 # ---- cycle ----------------------------------------------------------------
 # Milestone rules: (current_status, allowed_previous_statuses) -> (key, toggle)
 _TRANSITIONS = [
@@ -316,8 +395,13 @@ def process_cycle(live, state):
                 if cur == c_status and prev in prevs:
                     mk = f"{fid}:{key}"
                     if FLAGS[toggle] and mk not in milestones:
-                        if post_text(milestone_message(fx, key)):
-                            milestones.add(mk)
+                        if key == "KO" and THREAD_MODE:
+                            # kick-off IS the anchor post in thread mode
+                            if ensure_thread(fid, fx, state):
+                                milestones.add(mk)
+                        else:
+                            if publish_event(fid, fx, toggle, milestone_message(fx, key), state):
+                                milestones.add(mk)
                     break
         last_status[str(fid)] = cur
 
@@ -326,13 +410,16 @@ def process_cycle(live, state):
             detail = ev.get("detail") or ""
             sig = event_signature(fid, ev)
             if etype == "Goal" and "Missed" not in detail:
-                if FLAGS["GOALS"] and sig not in posted and post_text(goal_message(fx, ev)):
+                if FLAGS["GOALS"] and sig not in posted and \
+                        publish_event(fid, fx, "GOALS", goal_message(fx, ev), state):
                     posted.add(sig)
             elif etype == "Goal" and "Missed" in detail:
-                if FLAGS["PENALTIES"] and sig not in posted and post_text(penmiss_message(fx, ev)):
+                if FLAGS["PENALTIES"] and sig not in posted and \
+                        publish_event(fid, fx, "PENALTIES", penmiss_message(fx, ev), state):
                     posted.add(sig)
             elif etype == "Card" and ("Red" in detail or "Second Yellow" in detail):
-                if FLAGS["REDCARDS"] and sig not in posted and post_text(redcard_message(fx, ev)):
+                if FLAGS["REDCARDS"] and sig not in posted and \
+                        publish_event(fid, fx, "REDCARDS", redcard_message(fx, ev), state):
                     posted.add(sig)
 
     # matches that left the live feed -> queue for a confirmed final
@@ -348,7 +435,7 @@ def process_cycle(live, state):
         short = fx["fixture"]["status"]["short"] if fx else None
         if short in ("FT", "AET", "PEN"):
             if FLAGS["FULLTIME"]:
-                if post_text(final_message(fx, short)):
+                if publish_event(fid, fx, "FULLTIME", final_message(fx, short), state):
                     ft_final.add(fid)
                     pending.pop(fid_s, None)
             else:
@@ -376,7 +463,11 @@ def main():
         log("FATAL missing APISPORTS_KEY or FB_PAGE_TOKEN env var")
         sys.exit(1)
     on = [k for k, v in FLAGS.items() if v]
-    log("live worker v2 starting; leagues", LEAGUES, "| FT cards:", POST_FT_CARDS, "| events on:", ",".join(on))
+    log("live worker v3 starting; leagues", LEAGUES,
+        "| thread mode:", THREAD_MODE,
+        "| feed events:", ",".join(sorted(FEED_EVENTS)) if THREAD_MODE else "ALL",
+        "| FT cards:", POST_FT_CARDS,
+        "| events on:", ",".join(on))
     state = load_state()
     while True:
         live = fetch_live()
