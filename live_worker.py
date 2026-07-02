@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Trend Radar NG - Live in-play worker v3 (Match Thread mode)
-===========================================================
+Trend Radar NG - Live in-play worker v3.1 (Match Thread mode)
+=============================================================
 Always-on Render background worker, OUTSIDE n8n (no execution metering). Polls
 API-SPORTS for in-play fixtures and narrates every major match event.
 
@@ -14,7 +14,8 @@ NEW IN v3 - MATCH THREAD MODE (on by default):
   - Selected big moments ALSO go to the feed (default: goals and full-time),
     controlled by FEED_EVENTS.
   - If the worker starts mid-match (no anchor yet), it creates the thread
-    lazily on the first event it sees, so coverage is never silently dropped.
+    IMMEDIATELY on first sighting of an in-play match (v3.1), with the current
+    score in the anchor text - no waiting for the first event.
   - Set THREAD_MODE=false to get exact v2 behaviour (every event to the feed).
 
 Carried over from v2:
@@ -86,6 +87,7 @@ MIN_POST_GAP = 8
 BACKOFF_429  = 90
 FINAL_MAX_TRIES = 40   # ~40 cycles to keep retrying a finished match's final
 MAX_THREADS     = 60   # anchor post ids kept in state
+INPLAY = ("1H", "HT", "2H", "ET", "BT", "P")   # statuses that warrant a thread
 
 
 def log(*a):
@@ -258,11 +260,13 @@ def _lg(fx):
     return f"{lg['name']} \u00b7 {lg.get('round', '')}".rstrip(" \u00b7")
 
 
-def thread_anchor_message(fx):
+def thread_anchor_message(fx, midmatch=False):
     home, away = _teams(fx)
-    return (f"\U0001F3DF MATCH THREAD\n{home} vs {away}\n{_lg(fx)}\n\n"
-            "Follow this post for live coverage. Every goal, card, and key "
-            "moment will appear in the comments as it happens.")
+    head = f"\U0001F3DF MATCH THREAD\n{home} vs {away}\n{_lg(fx)}"
+    if midmatch:
+        head += f"\n\nThis match is underway. Latest score: {_score_line(fx)}."
+    return (head + "\n\nFollow this post for live coverage. Every goal, card, "
+            "and key moment will appear in the comments as it happens.")
 
 
 def goal_message(fx, ev):
@@ -337,7 +341,8 @@ def ensure_thread(fid, fx, state):
     tid = state["threads"].get(str(fid))
     if tid:
         return tid
-    pid = post_text(thread_anchor_message(fx))
+    midmatch = fx["fixture"]["status"]["short"] != "1H" or bool(fx.get("events"))
+    pid = post_text(thread_anchor_message(fx, midmatch=midmatch))
     if pid:
         state["threads"][str(fid)] = pid
         # prune oldest entries beyond cap (dict preserves insertion order)
@@ -389,6 +394,11 @@ def process_cycle(live, state):
         current.add(fid)
         cur = fx["fixture"]["status"]["short"]
         prev = last_status.get(str(fid))
+
+        # v3.1: first sighting of an in-play match -> create the thread now,
+        # so a worker (re)started mid-match anchors immediately, event or not.
+        if THREAD_MODE and cur in INPLAY and str(fid) not in state["threads"]:
+            ensure_thread(fid, fx, state)
 
         if prev is not None and prev != cur:
             for c_status, prevs, key, toggle in _TRANSITIONS:
@@ -463,7 +473,7 @@ def main():
         log("FATAL missing APISPORTS_KEY or FB_PAGE_TOKEN env var")
         sys.exit(1)
     on = [k for k, v in FLAGS.items() if v]
-    log("live worker v3 starting; leagues", LEAGUES,
+    log("live worker v3.1 starting; leagues", LEAGUES,
         "| thread mode:", THREAD_MODE,
         "| feed events:", ",".join(sorted(FEED_EVENTS)) if THREAD_MODE else "ALL",
         "| FT cards:", POST_FT_CARDS,
