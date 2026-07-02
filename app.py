@@ -5,6 +5,7 @@ GET  /            -> health check ("ok")
 GET/POST /card        -> news card (binary PNG)
 GET/POST /wisdom      -> wisdom-lane card (binary PNG)
 GET/POST /reflection  -> reflection-lane card (binary PNG)
+GET/POST /health      -> health & wellness lane card (binary PNG)
 """
 
 from flask import Flask, request, send_file, Response
@@ -14,6 +15,7 @@ import json as _json
 import os
 
 from trend_radar_card import build_card, build_wisdom_card, build_reflection_card, build_results_card
+from health_card import render_health_card
 
 app = Flask(__name__)
 
@@ -115,6 +117,30 @@ def reflection():
     buf.seek(0)
     return send_file(buf, mimetype="image/png",
                      download_name="trendradar_reflection.png")
+
+
+def _health_params(src):
+    headline = (src.get("headline") or "").strip()[:MAX_HEADLINE]
+    source   = (src.get("source") or "").strip() or "the source"
+    date_str = (src.get("date") or "").strip() or datetime.now().strftime("%-d %b %Y")
+    handle   = (src.get("handle") or "fb.com/TrendRadarNG").strip()
+    return headline, source, date_str, handle
+
+
+@app.route("/health", methods=["GET", "POST"])
+def health_lane():
+    src = _source(request)
+    headline, source, date_str, handle = _health_params(src)
+    if not headline:
+        return Response('{"error":"headline is required"}', status=400,
+                        mimetype="application/json")
+    platform = "ig" if handle.startswith("@") else "fb"
+    img = render_health_card(headline, source, date_str, platform=platform)
+    buf = BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png",
+                     download_name="trendradar_health.png")
 
 
 def _results_params(src):
