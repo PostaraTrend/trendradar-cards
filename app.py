@@ -25,6 +25,7 @@ app = Flask(__name__)
 from wahala_card import wahala_bp
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
+app.register_blueprint(wahala_bp)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
