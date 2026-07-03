@@ -1,7 +1,16 @@
 """
 Wahala Watch lane card — Trend Radar NG
 POST /render/wahala -> binary PNG (matches house pattern: send_file, fonts at repo root)
-Returns 400 on missing fields, 422 on contractions, 500 with JSON traceback on render errors.
+
+Expected JSON body:
+{
+  "headline":    "EFCC Probes ... Alleged N4.2 Billion ...",   (required)
+  "body":        "Premium Times reports ...",                   (required)
+  "stage":       "OFFICIAL_PROBE",                              (required)
+  "source_line": "Source: Premium Times - 2 July 2026",         (required)
+  "handle":      "fb.com/TrendRadarNG"                          (optional)
+}
+Returns 400 on missing fields, 422 if a contraction reaches the card face.
 """
 import os
 import re
@@ -22,6 +31,23 @@ WHITE, AMBER, SKY, MUTE = (255, 255, 255), (245, 182, 46), (126, 196, 238), (200
 _HERE = os.path.dirname(os.path.abspath(__file__))
 def _font(name, size):
     return ImageFont.truetype(os.path.join(_HERE, name), size)
+
+
+def _wrap_px(d, text, font, max_w):
+    """Greedy word wrap measured in pixels — every returned line fits max_w."""
+    words = text.split()
+    lines, cur = [], ""
+    for wd in words:
+        t = (cur + " " + wd).strip()
+        if d.textlength(t, font=font) <= max_w:
+            cur = t
+        else:
+            if cur:
+                lines.append(cur)
+            cur = wd
+    if cur:
+        lines.append(cur)
+    return lines
 
 STAGE_CHIP = {
     "ACCUSED":        "ALLEGATION — NOT PROVEN",
@@ -71,8 +97,8 @@ def _background(seed=7):
     for _ in range(300):
         x, y = rnd.randrange(W), rnd.randrange(H)
         r = rnd.choice([1, 1, 1, 2, 2, 3])
-        colr = rnd.choice([(255, 255, 255), (200, 225, 250), (170, 210, 245)])
-        d.ellipse([x - r, y - r, x + r, y + r], fill=colr + (rnd.randint(60, 200),))
+        col = rnd.choice([(255, 255, 255), (200, 225, 250), (170, 210, 245)])
+        d.ellipse([x - r, y - r, x + r, y + r], fill=col + (rnd.randint(60, 200),))
     return base
 
 
@@ -85,14 +111,14 @@ def build_wahala_card(headline, body, stage, source_line, handle="fb.com/TrendRa
     d.text((cx, 120), "WAHALA WATCH", font=_font("Poppins-Bold.ttf", 58), fill=AMBER, anchor="mm")
     d.line([cx - 120, 168, cx + 120, 168], fill=AMBER, width=4)
 
-    # Headline — autosize, max 4 lines
+    # Headline — pixel-measured wrap, guaranteed to fit, max 4 lines
+    max_w = W - 140
     size = 80
-    lines = []
-    fh = _font("Poppins-Bold.ttf", size)
-    while size > 50:
+    fh, lines = None, []
+    while size >= 44:
         fh = _font("Poppins-Bold.ttf", size)
-        lines = textwrap.wrap(headline.upper(), width=max(14, int(26 * 76 / size)))
-        if len(lines) <= 4 and all(d.textlength(l, font=fh) <= W - 120 for l in lines):
+        lines = _wrap_px(d, headline.upper(), fh, max_w)
+        if len(lines) <= 4:
             break
         size -= 4
     y = 300
@@ -100,12 +126,16 @@ def build_wahala_card(headline, body, stage, source_line, handle="fb.com/TrendRa
         d.text((cx, y), ln, font=fh, fill=WHITE, anchor="mm")
         y += int(size * 1.28)
 
-    # Body — max 3 lines
-    fb = _font("Poppins-Medium.ttf", 44)
+    # Body — pixel-measured wrap, max 3 lines, shrink once if needed
     y += 36
-    for ln in textwrap.wrap(body, width=44)[:3]:
+    for bsize in (44, 38):
+        fb = _font("Poppins-Medium.ttf", bsize)
+        blines = _wrap_px(d, body, fb, max_w)
+        if len(blines) <= 3:
+            break
+    for ln in blines[:3]:
         d.text((cx, y), ln, font=fb, fill=MUTE, anchor="mm")
-        y += 60
+        y += int(bsize * 1.35)
 
     # Claim-stage chip (always rendered — the legal honesty device)
     chip = STAGE_CHIP.get((stage or "").upper(), "ALLEGATION — NOT PROVEN")
