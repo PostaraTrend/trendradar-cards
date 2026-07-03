@@ -240,6 +240,7 @@ ALERT_RED_DEEP = (150, 30, 24)
 
 
 def render_alert_card(payload: dict) -> Image.Image:
+    city = (payload.get("city") or "Lagos").strip()[:12]
     kind = (payload.get("kind") or "TRAFFIC ALERT").upper()[:20]
     road = (payload.get("road") or "Lagos road network").strip()[:38]
     stretch = (payload.get("stretch") or "").strip()[:70]
@@ -252,7 +253,9 @@ def render_alert_card(payload: dict) -> Image.Image:
     img = Image.new("RGB", (W * SS, H * SS), NAVY)
     d = ImageDraw.Draw(img)
     f = _fonts()
-    big = _font(["Poppins-ExtraBold.ttf", "Poppins-Bold.ttf"], 92)
+    title_text = f"{city.upper()} TRAFFIC ALERT"
+    big_size = 92
+    big = _font(["Poppins-ExtraBold.ttf", "Poppins-Bold.ttf"], big_size)
     road_f = _font(["Poppins-Bold.ttf", "Poppins-SemiBold.ttf"], 58)
     kind_f = _font(["Poppins-Bold.ttf", "Poppins-SemiBold.ttf"], 40)
     body_f = _font(["Poppins-Medium.ttf", "Poppins-Regular.ttf"], 34)
@@ -264,7 +267,11 @@ def render_alert_card(payload: dict) -> Image.Image:
     d.rectangle([0, 0, W * SS, header_h], fill=ALERT_RED_DEEP)
     d.rectangle([0, header_h - 6 * SS, W * SS, header_h], fill=(255, 205, 200))
     d.text((pad, 40 * SS), "TREND RADAR NG", font=f["brand"], fill=(255, 214, 210))
-    d.text((pad, 96 * SS), "TRAFFIC ALERT", font=big, fill=WHITE)
+    # shrink title until it fits the width (radar motif occupies top-right)
+    while big_size > 52 and d.textlength(title_text, font=big) > (W - 240) * SS:
+        big_size -= 4
+        big = _font(["Poppins-ExtraBold.ttf", "Poppins-Bold.ttf"], big_size)
+    d.text((pad, 96 * SS), title_text, font=big, fill=WHITE)
     if detected_at:
         d.text((pad, 226 * SS), detected_at, font=f["sub"], fill=(255, 214, 210))
     _radar_motif(d, (W - 118) * SS, 118 * SS, 58 * SS)
