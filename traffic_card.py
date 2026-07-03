@@ -122,8 +122,13 @@ def render_traffic_card(payload: dict) -> Image.Image:
     pad = 64 * SS
     d.text((pad, 38 * SS), "TREND RADAR NG", font=f["brand"], fill=TEAL)
     d.text((pad, 86 * SS), "TRAFFIC WATCH", font=f["title"], fill=WHITE)
-    d.text((pad, 188 * SS), f"{city} Commute Brief  ·  {generated_at}",
-           font=f["sub"], fill=MUTED)
+    sub_text = f"{city} Commute Brief  ·  {generated_at}"
+    sub_size = 30
+    sub_font = f["sub"]
+    while sub_size > 20 and d.textlength(sub_text, font=sub_font) > (W - 128) * SS:
+        sub_size -= 2
+        sub_font = _font(["Poppins-Medium.ttf", "Poppins-Regular.ttf"], sub_size)
+    d.text((pad, 188 * SS), sub_text, font=sub_font, fill=MUTED)
     _radar_motif(d, (W - 118) * SS, 118 * SS, 58 * SS)
 
     y = header_h + 28 * SS
@@ -240,10 +245,15 @@ ALERT_RED_DEEP = (150, 30, 24)
 
 
 def render_alert_card(payload: dict) -> Image.Image:
-    city = (payload.get("city") or "Lagos").strip()[:12]
+    city = (payload.get("city") or "Lagos").strip()[:16]
     kind = (payload.get("kind") or "TRAFFIC ALERT").upper()[:20]
     road = (payload.get("road") or "Lagos road network").strip()[:38]
     stretch = (payload.get("stretch") or "").strip()[:70]
+    # collapse degenerate "From X to X" (TomTom sometimes reports from == to)
+    if stretch.lower().startswith("from ") and " to " in stretch:
+        _f, _t = stretch[5:].split(" to ", 1)
+        if _f.strip().lower() == _t.strip().lower():
+            stretch = "Near " + _f.strip()
     note = (payload.get("note") or "").strip()[:110]
     delay_min = payload.get("delay_min")
     detected_at = payload.get("detected_at") or ""
