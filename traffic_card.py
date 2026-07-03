@@ -219,3 +219,121 @@ if __name__ == "__main__":
     }
     render_traffic_card(demo).save("preview.png", "PNG")
     print("wrote preview.png")
+
+
+# ================================================================
+# FLASH ALERT CARD  (Phase 2)
+# POST /render/traffic-alert
+# {
+#   "kind": "ROAD CLOSED" | "ACCIDENT" | "BREAKDOWN",
+#   "road": "Airport Road",
+#   "stretch": "From 22nd Road to 41st Road",
+#   "delay_min": 25,                # optional
+#   "detected_at": "Friday, 03 July 2026 · 08:12 WAT",
+#   "note": "optional extra line from TomTom description",
+#   "platform": "facebook" | "instagram"
+# }
+# ================================================================
+
+ALERT_RED = (196, 46, 38)
+ALERT_RED_DEEP = (150, 30, 24)
+
+
+def render_alert_card(payload: dict) -> Image.Image:
+    kind = (payload.get("kind") or "TRAFFIC ALERT").upper()[:20]
+    road = (payload.get("road") or "Lagos road network").strip()[:38]
+    stretch = (payload.get("stretch") or "").strip()[:70]
+    note = (payload.get("note") or "").strip()[:110]
+    delay_min = payload.get("delay_min")
+    detected_at = payload.get("detected_at") or ""
+    platform = (payload.get("platform") or "facebook").lower()
+    footer_handle = "@trendradarng" if platform == "instagram" else "fb.com/TrendRadarNG"
+
+    img = Image.new("RGB", (W * SS, H * SS), NAVY)
+    d = ImageDraw.Draw(img)
+    f = _fonts()
+    big = _font(["Poppins-ExtraBold.ttf", "Poppins-Bold.ttf"], 92)
+    road_f = _font(["Poppins-Bold.ttf", "Poppins-SemiBold.ttf"], 58)
+    kind_f = _font(["Poppins-Bold.ttf", "Poppins-SemiBold.ttf"], 40)
+    body_f = _font(["Poppins-Medium.ttf", "Poppins-Regular.ttf"], 34)
+
+    pad = 64 * SS
+
+    # header band (red)
+    header_h = 300 * SS
+    d.rectangle([0, 0, W * SS, header_h], fill=ALERT_RED_DEEP)
+    d.rectangle([0, header_h - 6 * SS, W * SS, header_h], fill=(255, 205, 200))
+    d.text((pad, 40 * SS), "TREND RADAR NG", font=f["brand"], fill=(255, 214, 210))
+    d.text((pad, 96 * SS), "TRAFFIC ALERT", font=big, fill=WHITE)
+    if detected_at:
+        d.text((pad, 226 * SS), detected_at, font=f["sub"], fill=(255, 214, 210))
+    _radar_motif(d, (W - 118) * SS, 118 * SS, 58 * SS)
+
+    y = header_h + 70 * SS
+
+    # incident kind pill
+    pill_h = 66 * SS
+    tw = d.textlength(kind, font=kind_f)
+    d.rounded_rectangle([pad, y, pad + tw + 72 * SS, y + pill_h],
+                        radius=pill_h // 2, fill=ALERT_RED)
+    d.text((pad + 36 * SS, y + pill_h // 2), kind, font=kind_f,
+           fill=WHITE, anchor="lm")
+    y += pill_h + 56 * SS
+
+    # road name (wrap to 2 lines max)
+    words, lines, cur = road.split(), [], ""
+    for wd in words:
+        t = (cur + " " + wd).strip()
+        if d.textlength(t, font=road_f) <= (W - 128) * SS:
+            cur = t
+        else:
+            lines.append(cur); cur = wd
+    lines.append(cur)
+    for ln in lines[:2]:
+        d.text((pad, y), ln, font=road_f, fill=WHITE)
+        y += 84 * SS
+    y += 12 * SS
+
+    if stretch:
+        d.text((pad, y), stretch, font=body_f, fill=MUTED)
+        y += 62 * SS
+
+    if delay_min:
+        d.text((pad, y), f"Estimated delay: about {int(delay_min)} minutes",
+               font=body_f, fill=(245, 176, 65))
+        y += 62 * SS
+
+    if note:
+        y += 14 * SS
+        d.rounded_rectangle([pad, y, (W - 64) * SS, y + 96 * SS],
+                            radius=16 * SS, fill=CARD_ROW)
+        d.text((pad + 26 * SS, y + 48 * SS), note, font=f["alert"],
+               fill=(220, 232, 244), anchor="lm")
+        y += 130 * SS
+
+    # advisory line
+    d.text((pad, H * SS - 96 * SS - 130 * SS),
+           "Plan an alternative route where possible.",
+           font=body_f, fill=TEAL)
+
+    # footer
+    footer_h = 96 * SS
+    d.rectangle([0, H * SS - footer_h, W * SS, H * SS], fill=NAVY_DEEP)
+    d.rectangle([0, H * SS - footer_h, W * SS, H * SS - footer_h + 4 * SS], fill=EMERALD)
+    d.text((pad, H * SS - footer_h // 2), footer_handle, font=f["footer"],
+           fill=WHITE, anchor="lm")
+    d.text(((W - 64) * SS, H * SS - footer_h // 2),
+           "Data source: TomTom Traffic", font=f["speed"], fill=MUTED, anchor="rm")
+
+    return img.resize((W, H), Image.LANCZOS)
+
+
+@traffic_bp.route("/render/traffic-alert", methods=["POST"])
+def render_traffic_alert():
+    payload = request.get_json(force=True, silent=True) or {}
+    img = render_alert_card(payload)
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png",
+                     download_name="trng-traffic-alert.png")
