@@ -22,6 +22,7 @@ from newsstand_card import newsstand_bp
 from traffic_card import traffic_bp
 
 app = Flask(__name__)
+from wahala_card import wahala_bp
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 
