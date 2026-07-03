@@ -11,6 +11,7 @@ Expected JSON body:
   "handle":      "fb.com/TrendRadarNG"                          (optional)
 }
 Returns 400 on missing fields, 422 if a contraction reaches the card face.
+Possessives (judge's, child's) are allowed; true contractions (don't, we'll) are blocked.
 """
 import os
 import re
@@ -59,7 +60,8 @@ STAGE_CHIP = {
     "PUBLIC_DISPUTE": "PUBLIC DISPUTE — CLAIMS ON BOTH SIDES",
 }
 
-_CONTRACTION = re.compile(r"\b\w+'(s|t|re|ve|ll|d|m)\b", re.IGNORECASE)
+# Possessive 's is allowed; true contractions ('t, 're, 've, 'll, 'd, 'm) are blocked.
+_CONTRACTION = re.compile(r"\b\w+'(t|re|ve|ll|d|m)\b", re.IGNORECASE)
 
 
 def _source(req):
@@ -97,8 +99,8 @@ def _background(seed=7):
     for _ in range(300):
         x, y = rnd.randrange(W), rnd.randrange(H)
         r = rnd.choice([1, 1, 1, 2, 2, 3])
-        col = rnd.choice([(255, 255, 255), (200, 225, 250), (170, 210, 245)])
-        d.ellipse([x - r, y - r, x + r, y + r], fill=col + (rnd.randint(60, 200),))
+        star = rnd.choice([(255, 255, 255), (200, 225, 250), (170, 210, 245)])
+        d.ellipse([x - r, y - r, x + r, y + r], fill=star + (rnd.randint(60, 200),))
     return base
 
 
