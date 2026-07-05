@@ -1,26 +1,47 @@
 #!/usr/bin/env python3
 """
-Trend Radar NG - Live in-play worker v3.2 (Match Thread mode + Claude voice)
+Trend Radar NG - Live in-play worker v3.3 (Match Thread mode + Claude voice)
 ============================================================================
 Always-on Render background worker, OUTSIDE n8n (no execution metering). Polls
 API-SPORTS for in-play fixtures and narrates every major match event.
 
-NEW IN v3.2 - CLAUDE COMMENTARY LAYER:
+NEW IN v3.3 - GOAL CONFIRMATION LAYER (anti ghost-goal):
+- API-SPORTS registers goal events BEFORE VAR checks resolve and BEFORE the
+  fixture score updates. Result observed July 5, 2026 (Brazil vs Norway): a
+  3' "goal" was posted with a stale 0-0 score, then silently retracted by the
+  API after VAR disallowed it. The final score proved it never counted.
+- Fix: GOAL events are now held in a pending queue and published only after
+  they have survived GOAL_CONFIRM_CYCLES consecutive polls AND the fixture
+  score agrees with the count of goal events (the "settled" signal). A goal
+  that vanishes from the events array while pending is dropped with a log
+  line and never reaches the page.
+- Re-timed duplicates: API-SPORTS sometimes shifts a goal's minute after the
+  fact (79' <-> 80'). A goal whose team + player match an already-posted goal
+  within two minutes is treated as the same goal and never posts twice.
+- Force-publish safety valve: a goal that persists GOAL_CONFIRM_MAX cycles is
+  published even if the score check never settles, so a real goal can never
+  be lost to an API accounting quirk.
+- Shootout exception: during penalty shootouts (status P) events fire
+  rapid-fire and are never VAR-retracted, so they bypass the delay entirely.
+- All other event types (kick-off, half-time, full-time, red cards) keep
+  instant publishing - they are never retracted by the API.
+- New env vars (set on the Render service):
+      GOAL_CONFIRM_CYCLES  default 2  (polls a goal must survive; 0 disables
+                           the layer and restores v3.2 instant behaviour)
+      GOAL_CONFIRM_MAX     default 5  (force-publish ceiling)
+- Latency cost: roughly 2 x POLL_LIVE = ~2 minutes on goal comments. Ghost
+  goals cost audience trust; two minutes does not.
+
+Carried over from v3.2 - CLAUDE COMMENTARY LAYER:
 - Every event message keeps its factual template line (score, minute, names
   come from the API, never from the model - zero hallucination risk on facts)
   and appends ONE short Claude-written commentary line in the Trend Radar NG
   voice: energetic Nigerian English, no contractions.
 - Fail-safe by design: any Claude error, timeout, over-length reply, or
-  contraction slip falls back silently to the plain v3.1 template message.
+  contraction slip falls back silently to the plain template message.
   A Claude outage can never delay, block, or spam the thread.
-- New env vars (set on the Render service):
-      ANTHROPIC_API_KEY   required for flavor lines (worker runs fine without;
-                          it simply behaves exactly like v3.1)
-      CLAUDE_COMMENTARY   default true  (set false to disable the layer)
-      CLAUDE_MODEL        default claude-haiku-4-5-20251001
-- Applies to: goals, red cards, penalty misses, status milestones (half-time,
-  second half, extra time, penalties) and full-time. The anchor post stays
-  template-only so the thread header is always uniform.
+- Env vars: ANTHROPIC_API_KEY (optional), CLAUDE_COMMENTARY (default true),
+  CLAUDE_MODEL (default claude-haiku-4-5-20251001).
 
 Carried over from v3/v3.1:
 - At kick-off the worker publishes ONE anchor feed post per match; every
@@ -40,6 +61,8 @@ Environment variables (set on the Render service):
     STATE_PATH     default /data/live_state.json
     POST_FT_CARDS  default false (worker posts FT text; digest owns the card)
     THREAD_MODE    default true (anchor post + comments)
+    GOAL_CONFIRM_CYCLES  default 2 (v3.3, see above)
+    GOAL_CONFIRM_MAX     default 5 (v3.3, see above)
     FEED_EVENTS    default GOALS,FULLTIME
         categories that ALSO post to the feed while in thread mode.
         Valid: HALFTIME SECONDHALF EXTRATIME FULLTIME GOALS REDCARDS
@@ -67,6 +90,17 @@ POST_FT_CARDS = os.environ.get("POST_FT_CARDS", "false").lower() == "true"
 THREAD_MODE = os.environ.get("THREAD_MODE", "true").lower() == "true"
 FEED_EVENTS = set(x.strip().upper() for x in
                   os.environ.get("FEED_EVENTS", "GOALS,FULLTIME").split(",") if x.strip())
+
+# ---- v3.3: goal confirmation configuration ---------------------------------
+def _int_env(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+GOAL_CONFIRM_CYCLES = _int_env("GOAL_CONFIRM_CYCLES", 2)   # polls a goal must survive
+GOAL_CONFIRM_MAX = _int_env("GOAL_CONFIRM_MAX", 5)         # force-publish ceiling
 
 # ---- v3.2: Claude commentary configuration ---------------------------------
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -121,6 +155,7 @@ MIN_POST_GAP = 8
 BACKOFF_429 = 90
 FINAL_MAX_TRIES = 40   # ~40 cycles to keep retrying a finished match's final
 MAX_THREADS = 60       # anchor post ids kept in state
+MAX_PENDING_GOALS = 60 # pending confirmation entries kept in state
 INPLAY = ("1H", "HT", "2H", "ET", "BT", "P")  # statuses that warrant a thread
 
 
@@ -143,6 +178,7 @@ def load_state():
     s.setdefault("ft_final", [])        # fids whose final was posted
     s.setdefault("pending_final", {})   # fid(str) -> attempts, awaiting final
     s.setdefault("threads", {})         # fid(str) -> anchor post id
+    s.setdefault("pending_goals", {})   # v3.3: event sig -> polls survived
     return s
 
 
@@ -323,6 +359,61 @@ def event_signature(fid, ev):
     return "|".join(str(x) for x in [fid, t.get("elapsed"), t.get("extra"),
                                      team.get("id"), player.get("id"),
                                      ev.get("type"), ev.get("detail")])
+
+
+# ---- v3.3: goal confirmation helpers ----------------------------------------
+
+def _sig_parts(sig):
+    """Split a signature back into its 7 components, or None if malformed.
+    Order: fid, elapsed, extra, team_id, player_id, type, detail."""
+    p = sig.split("|")
+    return p if len(p) == 7 else None
+
+
+def _fuzzy_posted(fid, ev, posted):
+    """True when a goal by the same team + player was already posted within
+    two minutes of this event. API-SPORTS re-times goal events retroactively
+    (a 79' goal can become an 80' goal), which changes the signature; without
+    this guard a re-timed goal would publish twice."""
+    team = str((ev.get("team") or {}).get("id"))
+    player = str((ev.get("player") or {}).get("id"))
+    try:
+        el = int((ev.get("time") or {}).get("elapsed"))
+    except (TypeError, ValueError):
+        return False
+    for sig in posted:
+        p = _sig_parts(sig)
+        if not p or p[0] != str(fid) or p[5] != "Goal":
+            continue
+        if "Missed" in (p[6] or ""):
+            continue
+        if p[3] == team and p[4] == player:
+            try:
+                if abs(int(p[1]) - el) <= 2:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
+def _score_settled(fx):
+    """True when the fixture score agrees with the number of goal events.
+    This is the signal that API-SPORTS has finished settling the incident
+    (VAR resolved, score field updated). Shootout events carry a
+    'Penalty Shootout' comment and never count toward the fixture score,
+    so they are excluded."""
+    g = fx.get("goals") or {}
+    total = (g.get("home") or 0) + (g.get("away") or 0)
+    n = 0
+    for ev in fx.get("events", []) or []:
+        if ev.get("type") != "Goal":
+            continue
+        if "Missed" in (ev.get("detail") or ""):
+            continue
+        if "Shootout" in (ev.get("comments") or ""):
+            continue
+        n += 1
+    return n == total
 
 
 def _teams(fx):
@@ -515,6 +606,8 @@ def process_cycle(live, state):
     last_status = state["last_status"]
     ft_final = set(state["ft_final"])
     pending = dict(state["pending_final"])
+    pending_goals = dict(state["pending_goals"])   # v3.3
+    seen_goal_sigs = set()                          # v3.3: goal sigs seen this cycle
     current = set()
 
     for fx in live:
@@ -551,9 +644,38 @@ def process_cycle(live, state):
             sig = event_signature(fid, ev)
             if etype == "Goal" and "Missed" not in detail:
                 if FLAGS["GOALS"] and sig not in posted:
-                    msg = with_flavor(goal_message(fx, ev), _desc_goal(fx, ev))  # v3.2
-                    if publish_event(fid, fx, "GOALS", msg, state):
+                    # ---- v3.3: goal confirmation layer -----------------
+                    seen_goal_sigs.add(sig)
+                    if _fuzzy_posted(fid, ev, posted):
+                        # re-timed duplicate of an already-posted goal:
+                        # mark handled so it never publishes twice
+                        log("SKIP re-timed duplicate goal", sig)
                         posted.add(sig)
+                        pending_goals.pop(sig, None)
+                    elif cur == "P" or GOAL_CONFIRM_CYCLES <= 0:
+                        # shootout kicks fire rapidly and are never
+                        # VAR-retracted; layer disabled -> v3.2 behaviour
+                        msg = with_flavor(goal_message(fx, ev), _desc_goal(fx, ev))
+                        if publish_event(fid, fx, "GOALS", msg, state):
+                            posted.add(sig)
+                    else:
+                        n = pending_goals.get(sig, 0) + 1
+                        confirmed = n > GOAL_CONFIRM_CYCLES and _score_settled(fx)
+                        forced = n > GOAL_CONFIRM_MAX
+                        if confirmed or forced:
+                            if forced and not confirmed:
+                                log("FORCE publishing goal after",
+                                    n, "cycles (score never settled)", sig)
+                            msg = with_flavor(goal_message(fx, ev), _desc_goal(fx, ev))
+                            if publish_event(fid, fx, "GOALS", msg, state):
+                                posted.add(sig)
+                                pending_goals.pop(sig, None)
+                            else:
+                                pending_goals[sig] = n
+                        else:
+                            pending_goals[sig] = n
+                            log("HOLD goal awaiting confirmation",
+                                f"cycle {n}/{GOAL_CONFIRM_CYCLES + 1}", sig)
             elif etype == "Goal" and "Missed" in detail:
                 if FLAGS["PENALTIES"] and sig not in posted:
                     msg = with_flavor(penmiss_message(fx, ev), _desc_penmiss(fx, ev))  # v3.2
@@ -564,6 +686,24 @@ def process_cycle(live, state):
                     msg = with_flavor(redcard_message(fx, ev), _desc_redcard(fx, ev))  # v3.2
                     if publish_event(fid, fx, "REDCARDS", msg, state):
                         posted.add(sig)
+
+    # v3.3: prune the pending-goal queue
+    for sig in list(pending_goals.keys()):
+        p = _sig_parts(sig)
+        p_fid = int(p[0]) if p and p[0].isdigit() else None
+        if p_fid in current and sig not in seen_goal_sigs:
+            # the event vanished from the API while the match is still live:
+            # VAR disallowed it (or the API withdrew it) BEFORE we published.
+            # This is the July 5 Brazil-Norway ghost goal, now suppressed.
+            log("DROP goal retracted before publish (VAR)", sig)
+            pending_goals.pop(sig)
+        elif p_fid not in current:
+            # match left the live feed with the goal still unconfirmed; the
+            # full-time post will carry the authoritative final score.
+            log("DROP unconfirmed goal at match end (FT post covers score)", sig)
+            pending_goals.pop(sig)
+    while len(pending_goals) > MAX_PENDING_GOALS:
+        pending_goals.pop(next(iter(pending_goals)))
 
     # matches that left the live feed -> queue for a confirmed final
     for fid in set(state["seen_live"]) - current:
@@ -598,6 +738,7 @@ def process_cycle(live, state):
     state["milestones"] = list(milestones)[-600:]
     state["ft_final"] = list(ft_final)[-300:]
     state["pending_final"] = pending
+    state["pending_goals"] = pending_goals   # v3.3
     state["seen_live"] = list(current)
     return current
 
@@ -609,11 +750,14 @@ def main():
     on = [k for k, v in FLAGS.items() if v]
     claude_state = ("ON model " + CLAUDE_MODEL) if (CLAUDE_COMMENTARY and ANTHROPIC_KEY) else \
                    ("DISABLED" if not CLAUDE_COMMENTARY else "NO KEY (template-only)")
-    log("live worker v3.2 starting; leagues", LEAGUES,
+    goal_confirm_state = (f"ON ({GOAL_CONFIRM_CYCLES} cycles, force at {GOAL_CONFIRM_MAX})"
+                          if GOAL_CONFIRM_CYCLES > 0 else "OFF (instant)")
+    log("live worker v3.3 starting; leagues", LEAGUES,
         "| thread mode:", THREAD_MODE,
         "| feed events:", ",".join(sorted(FEED_EVENTS)) if THREAD_MODE else "ALL",
         "| FT cards:", POST_FT_CARDS,
         "| claude commentary:", claude_state,
+        "| goal confirmation:", goal_confirm_state,
         "| events on:", ",".join(on))
     state = load_state()
     while True:
