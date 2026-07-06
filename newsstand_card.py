@@ -1,8 +1,8 @@
 """
 TRNG News Stand card layout — add to the trendradar-cards Flask service.
 
-Endpoint: POST /render/newsstand
-Body (JSON): {
+Endpoint: GET/POST /render/newsstand
+Body (JSON) or query params: {
   "badge": "WEATHER ALERT",
   "location_line": "Lagos, Nigeria",
   "report_text": "Heavy rainfall is expected in Lagos today...",
@@ -10,6 +10,12 @@ Body (JSON): {
   "footer_text": "WEATHER WATCH \u2022 TREND RADAR NG"   # or "EYEWITNESS REPORT \u2022 TREND RADAR NG"
 }
 Returns: image/png, 1080 x 1350 (4:5 photo post)
+        or image/jpeg with format=jpg (query param or body field)
+
+GET + format=jpg (added Jul 2026): the Instagram Content Publishing API fetches
+media via a public GET URL and accepts JPEG only. n8n's Facebook photo path
+keeps using POST + PNG exactly as before; the Instagram cross-post branch calls
+GET /render/newsstand?format=jpg&... instead.
 
 Register in your app factory / main module:
     from newsstand_card import newsstand_bp
@@ -26,7 +32,8 @@ newsstand_bp = Blueprint("newsstand", __name__)
 
 def _body(req):
     """Defensive body parsing — matches the _source() pattern in app.py,
-    because n8n sometimes posts JSON that Flask does not auto-parse."""
+    because n8n sometimes posts JSON that Flask does not auto-parse.
+    For GET requests this falls through to req.values (query params)."""
     data = req.get_json(silent=True)
     if isinstance(data, dict):
         return data
@@ -39,6 +46,23 @@ def _body(req):
         except Exception:
             pass
     return req.values
+
+
+def _send_card(img, base_name, p):
+    """Serve the rendered card as PNG (default) or JPEG (format=jpg).
+    Mirrors _send_image() in app.py: Instagram ingestion needs JPEG,
+    every existing caller keeps receiving PNG."""
+    fmt = (p.get("format") or request.args.get("format") or "").strip().lower()
+    buf = io.BytesIO()
+    if fmt in ("jpg", "jpeg"):
+        img.convert("RGB").save(buf, format="JPEG", quality=92)
+        buf.seek(0)
+        return send_file(buf, mimetype="image/jpeg",
+                         download_name=f"{base_name}.jpg")
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png",
+                     download_name=f"{base_name}.png")
 
 # ---- Canvas + palette -------------------------------------------------------
 W, H = 1080, 1350
@@ -82,7 +106,7 @@ def _wrap(draw, text, font, max_w):
     return lines
 
 # ---- Endpoint ----------------------------------------------------------------
-@newsstand_bp.route("/render/newsstand", methods=["POST"])
+@newsstand_bp.route("/render/newsstand", methods=["GET", "POST"])
 def render_newsstand():
     p = _body(request)
     badge = (p.get("badge") or "NEWS STAND").upper()[:20]
@@ -161,8 +185,4 @@ def render_newsstand():
                         radius=12, outline=AMBER, width=4)
     d.text((lx, ly - lb[1]), logo, font=f_logo, fill=AMBER)
 
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return send_file(buf, mimetype="image/png",
-                     download_name="newsstand_card.png")
+    return _send_card(img, "newsstand_card", p)
