@@ -200,6 +200,31 @@ def _flag_eu(d, x, y, w, h):
     _flag_base(d, x, y, w, h)
 
 
+def _flag_australia(d, x, y, w, h):
+    d.rectangle([x, y, x + w, y + h], fill=(1, 33, 105))
+    # Union Jack canton (simplified) top-left quarter
+    cw, ch = w * 0.5, h * 0.5
+    d.line([x, y, x + cw, y + ch], fill=WHITE, width=5)
+    d.line([x + cw, y, x, y + ch], fill=WHITE, width=5)
+    d.line([x + cw / 2, y, x + cw / 2, y + ch], fill=WHITE, width=7)
+    d.line([x, y + ch / 2, x + cw, y + ch / 2], fill=WHITE, width=7)
+    d.line([x + cw / 2, y, x + cw / 2, y + ch], fill=(200, 16, 46), width=4)
+    d.line([x, y + ch / 2, x + cw, y + ch / 2], fill=(200, 16, 46), width=4)
+    # Commonwealth Star below the canton + Southern Cross on the fly side
+    def star(sx, sy, r):
+        import math
+        pts = []
+        for k in range(10):
+            rr = r if k % 2 == 0 else r * 0.45
+            a = math.pi * k / 5 - math.pi / 2
+            pts.append((sx + rr * math.cos(a), sy + rr * math.sin(a)))
+        d.polygon(pts, fill=WHITE)
+    star(x + cw / 2, y + ch + (h - ch) / 2, h * 0.14)
+    for sx, sy in [(0.75, 0.2), (0.88, 0.42), (0.72, 0.62), (0.62, 0.4), (0.8, 0.82)]:
+        star(x + w * sx, y + h * sy, h * 0.07)
+    _flag_base(d, x, y, w, h)
+
+
 _DEST_MAP = {
     "CANADA": "CANADA",
     "UK": "UK", "UNITED KINGDOM": "UK", "BRITAIN": "UK", "ENGLAND": "UK", "SCOTLAND": "UK",
@@ -209,6 +234,7 @@ _DEST_MAP = {
     "SPAIN": "EUROPE", "ITALY": "EUROPE", "IRELAND": "EUROPE", "FINLAND": "EUROPE",
     "SWEDEN": "EUROPE", "NORWAY": "EUROPE", "DENMARK": "EUROPE", "POLAND": "EUROPE",
     "AUSTRIA": "EUROPE", "BELGIUM": "EUROPE", "MALTA": "EUROPE",
+    "AUSTRALIA": "AUSTRALIA", "NEW ZEALAND": "AUSTRALIA",
 }
 
 
@@ -237,17 +263,22 @@ def build_jakpa_card(headline, takeaways, destination, source_line,
     d.text((nigeria_x + fw / 2, jy_top + fh_flag + 22), "NIGERIA",
            font=f_lbl_ng, fill=WHITE, anchor="mm")
 
-    dests = [("CANADA", _flag_canada), ("UK", _flag_uk),
-             ("USA", _flag_usa), ("EUROPE", _flag_eu)]
-    gap = 26
+    dests = [("CANADA", _flag_canada), ("UK", _flag_uk), ("USA", _flag_usa),
+             ("EUROPE", _flag_eu), ("AUSTRALIA", _flag_australia)]
+    gap = 24
     row_w = len(dests) * fw + (len(dests) - 1) * gap
     dest_x0 = W - M - row_w
-    f_lbl = _font("medium", 22)
     hi = _dest_key(destination)
     mid_y = jy_top + fh_flag / 2
     for i, (label, painter) in enumerate(dests):
         fx = dest_x0 + i * (fw + gap)
         painter(d, fx, jy_top, fw, fh_flag)
+        # per-label font fitting so long names (AUSTRALIA) never collide
+        lbl_size = 22
+        f_lbl = _font("medium", lbl_size)
+        while d.textlength(label, font=f_lbl) > fw + gap - 8 and lbl_size > 15:
+            lbl_size -= 1
+            f_lbl = _font("medium", lbl_size)
         d.text((fx + fw / 2, jy_top + fh_flag + 20), label,
                font=f_lbl, fill=MUTE if hi != label else GREEN_SOFT, anchor="mm")
         if hi == label:
@@ -300,7 +331,15 @@ def build_jakpa_card(headline, takeaways, destination, source_line,
         total = 0
         rendered = []
         for t in takes:
-            tl = _wrap_px(d, t, f, max_w - 60)[:2]
+            all_lines = _wrap_px(d, t, f, max_w - 60)
+            tl = all_lines[:2]
+            if len(all_lines) > 2 and tl:
+                # never cut a takeaway mid-sentence silently: trim the second
+                # line until an ellipsis fits, so the reader sees it is trimmed
+                line = tl[1]
+                while line and d.textlength(line + " …", font=f) > max_w - 60:
+                    line = line.rsplit(" ", 1)[0] if " " in line else line[:-2]
+                tl[1] = (line + " …").strip()
             total += len(tl) * int(ts * 1.3) + 18
             rendered.append(tl)
         return total, f, rendered
