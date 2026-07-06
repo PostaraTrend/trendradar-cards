@@ -1,8 +1,9 @@
 """
 Wahala Watch lane card — Trend Radar NG
-POST /render/wahala -> binary PNG (matches house pattern: send_file, fonts at repo root)
+GET/POST /render/wahala -> binary PNG (matches house pattern: send_file, fonts at repo root)
+                           or binary JPEG with format=jpg (query param or body field)
 
-Expected JSON body:
+Expected JSON body (POST) or query params (GET):
 {
   "headline":    "EFCC Probes ... Alleged N4.2 Billion ...",   (required)
   "body":        "Premium Times reports ...",                   (required)
@@ -12,6 +13,12 @@ Expected JSON body:
 }
 Returns 400 on missing fields, 422 if a contraction reaches the card face.
 Possessives (judge's, child's) are allowed; true contractions (don't, we'll) are blocked.
+
+GET + format=jpg (added Jul 2026): the Instagram Content Publishing API fetches
+media via a public GET URL and accepts JPEG only. The n8n Facebook photo path
+keeps using POST + PNG exactly as before; the Instagram cross-post branch calls
+GET /render/wahala?format=jpg&... instead. The contraction guard and claim-stage
+chip apply identically on both paths.
 """
 import os
 import re
@@ -65,7 +72,8 @@ _CONTRACTION = re.compile(r"\b\w+'(t|re|ve|ll|d|m)\b", re.IGNORECASE)
 
 
 def _source(req):
-    """Defensive param parsing, same approach as app.py."""
+    """Defensive param parsing, same approach as app.py.
+    For GET requests this falls through to req.values (query params)."""
     data = req.get_json(silent=True)
     if isinstance(data, dict):
         return data
@@ -78,6 +86,23 @@ def _source(req):
         except Exception:
             pass
     return req.values
+
+
+def _send_card(img, base_name, src):
+    """Serve the rendered card as PNG (default) or JPEG (format=jpg).
+    Mirrors _send_image() in app.py: Instagram ingestion needs JPEG,
+    every existing caller keeps receiving PNG."""
+    fmt = (src.get("format") or request.args.get("format") or "").strip().lower()
+    buf = BytesIO()
+    if fmt in ("jpg", "jpeg"):
+        img.convert("RGB").save(buf, "JPEG", quality=92)
+        buf.seek(0)
+        return send_file(buf, mimetype="image/jpeg",
+                         download_name=f"{base_name}.jpg")
+    img.save(buf, "PNG", optimize=True)
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png",
+                     download_name=f"{base_name}.png")
 
 
 def _background(seed=7):
@@ -160,7 +185,7 @@ def build_wahala_card(headline, body, stage, source_line, handle="fb.com/TrendRa
     return img
 
 
-@wahala_bp.route("/render/wahala", methods=["POST"])
+@wahala_bp.route("/render/wahala", methods=["GET", "POST"])
 def render_wahala():
     src = _source(request)
     headline    = (src.get("headline") or "").strip()[:240]
@@ -180,11 +205,7 @@ def render_wahala():
 
     try:
         img = build_wahala_card(headline, body, stage, source_line, handle)
-        buf = BytesIO()
-        img.save(buf, "PNG", optimize=True)
-        buf.seek(0)
-        return send_file(buf, mimetype="image/png",
-                         download_name="trendradar_wahala.png")
+        return _send_card(img, "trendradar_wahala", src)
     except Exception:
         import traceback
         return Response(_json.dumps({"error": "render failed",
