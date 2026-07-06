@@ -251,11 +251,14 @@ def build_jakpa_card(headline, takeaways, destination, source_line,
         d.text((fx + fw / 2, jy_top + fh_flag + 20), label,
                font=f_lbl, fill=MUTE if hi != label else GREEN_SOFT, anchor="mm")
         if hi == label:
+            lbl_w = d.textlength(label, font=f_lbl)
+            half = max(fw / 2, lbl_w / 2) + 10
+            cxf = fx + fw / 2
             try:
-                d.rounded_rectangle([fx - 8, jy_top - 8, fx + fw + 8, jy_top + fh_flag + 36],
+                d.rounded_rectangle([cxf - half, jy_top - 8, cxf + half, jy_top + fh_flag + 36],
                                     radius=12, outline=GREEN, width=4)
             except AttributeError:
-                d.rectangle([fx - 8, jy_top - 8, fx + fw + 8, jy_top + fh_flag + 36],
+                d.rectangle([cxf - half, jy_top - 8, cxf + half, jy_top + fh_flag + 36],
                             outline=GREEN, width=4)
 
     # dotted flight path from Nigeria to the destination row
@@ -265,6 +268,14 @@ def build_jakpa_card(headline, takeaways, destination, source_line,
         d.ellipse([x, mid_y - 3, x + 6, mid_y + 3], fill=(255, 255, 255, 130))
         x += 22
     _plane(d, (path_x0 + path_x1) / 2 - 26, mid_y - 22, 52, GREEN_SOFT)
+
+    # ---- bottom-anchored fixed positions (collision-proof) ----
+    footer_top = H - 140
+    source_y   = H - 186          # source line center
+    chip_h     = 68
+    chip_y     = H - 296          # chip box top (ends H-228, above source)
+    content_top    = 396
+    content_bottom = chip_y - 26  # everything above the chip must fit here
 
     # Headline - pixel-measured wrap, auto-shrink, max 4 lines
     max_w = W - 2 * M
@@ -276,47 +287,72 @@ def build_jakpa_card(headline, takeaways, destination, source_line,
         if len(lines) <= 4:
             break
         size -= 4
-    y = 396
-    for ln in lines[:4]:
+    lines = lines[:4]
+    head_h = len(lines) * int(size * 1.26)
+
+    # Takeaways - largest font size whose total height fits the remaining
+    # budget; as a last resort show only the first two takeaways
+    clean_takes = [str(t).strip() for t in (takeaways or []) if str(t).strip()][:3]
+    budget = content_bottom - content_top - head_h - 26
+
+    def _measure(takes, ts):
+        f = _font("medium", ts)
+        total = 0
+        rendered = []
+        for t in takes:
+            tl = _wrap_px(d, t, f, max_w - 60)[:2]
+            total += len(tl) * int(ts * 1.3) + 18
+            rendered.append(tl)
+        return total, f, rendered
+
+    chosen = None
+    for ts in (40, 36, 32):
+        total, f_take, rendered = _measure(clean_takes, ts)
+        if total <= budget:
+            chosen = (ts, f_take, rendered)
+            break
+    if chosen is None:
+        ts = 32
+        total, f_take, rendered = _measure(clean_takes[:2], ts)
+        chosen = (ts, f_take, rendered)
+    ts, f_take, rendered = chosen
+
+    # draw headline
+    y = content_top
+    for ln in lines:
         d.text((cx, y), ln, font=fh, fill=WHITE, anchor="mm")
         y += int(size * 1.26)
     y += 26
 
-    # Takeaways - up to 3, each with a green tick, wrapped to 2 lines max
-    f_take = _font("medium", 40)
+    # draw takeaways
     tick_r = 9
-    for t in (takeaways or [])[:3]:
-        t = str(t).strip()
-        if not t:
-            continue
-        tlines = _wrap_px(d, t, f_take, max_w - 60)[:2]
+    for tlines in rendered:
         d.ellipse([M, y - tick_r, M + 2 * tick_r, y + tick_r], fill=GREEN)
         d.line([M + 5, y, M + 8, y + 4], fill=NAVY_TOP, width=3)
         d.line([M + 8, y + 4, M + 14, y - 5], fill=NAVY_TOP, width=3)
         ty = y
         for tl in tlines:
             d.text((M + 46, ty), tl, font=f_take, fill=BODY_TINT, anchor="lm")
-            ty += int(40 * 1.3)
+            ty += int(ts * 1.3)
         y = ty + 18
 
-    # Integrity chip - permanent honesty device for this lane
+    # Integrity chip - fixed position, permanent honesty device for this lane
     chip = "OFFICIAL INFORMATION — NOT A VISA PROMISE"
     fc = _font("medium", 32)
     tw = d.textlength(chip, font=fc)
-    chip_y = max(y + 20, H - 360)
-    box = [cx - tw / 2 - 34, chip_y, cx + tw / 2 + 34, chip_y + 68]
+    box = [cx - tw / 2 - 34, chip_y, cx + tw / 2 + 34, chip_y + chip_h]
     try:
         d.rounded_rectangle(box, radius=34, outline=CHIP_SKY, width=4)
     except AttributeError:
         d.rectangle(box, outline=CHIP_SKY, width=4)
-    d.text((cx, chip_y + 34), chip, font=fc, fill=CHIP_SKY, anchor="mm")
+    d.text((cx, chip_y + chip_h / 2), chip, font=fc, fill=CHIP_SKY, anchor="mm")
 
-    # Source line (mandatory, dated - the lane's spine)
-    d.text((cx, H - 210), source_line, font=_font("bold", 38), fill=GREEN_SOFT, anchor="mm")
+    # Source line (mandatory, dated) - fixed above the footer
+    d.text((cx, source_y), source_line, font=_font("bold", 38), fill=GREEN_SOFT, anchor="mm")
 
     # Footer band
-    d.rectangle([0, H - 140, W, H - 130], fill=GREEN)
-    d.rectangle([0, H - 130, W, H], fill=NAVY_TOP)
+    d.rectangle([0, footer_top, W, footer_top + 10], fill=GREEN)
+    d.rectangle([0, footer_top + 10, W, H], fill=NAVY_TOP)
     d.text((70, H - 66), handle, font=_font("bold", 36), fill=GREEN_SOFT, anchor="lm")
     d.text((W - 70, H - 66), "Legal pathways, curated.", font=_font("regular", 34),
            fill=MUTE, anchor="rm")
