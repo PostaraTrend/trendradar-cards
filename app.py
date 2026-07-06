@@ -2,12 +2,18 @@
 Trend Radar NG — Headline Card Render Service
 =============================================
 GET  /            -> health check ("ok")
-GET/POST /card        -> news card (binary PNG)
-GET/POST /wisdom      -> wisdom-lane card (binary PNG)
-GET/POST /reflection  -> reflection-lane card (binary PNG)
-GET/POST /health      -> health & wellness lane card (binary PNG)
+GET/POST /card        -> news card (binary PNG, or JPEG with ?format=jpg)
+GET/POST /wisdom      -> wisdom-lane card (binary PNG, or JPEG with ?format=jpg)
+GET/POST /reflection  -> reflection-lane card (binary PNG, or JPEG with ?format=jpg)
+GET/POST /health      -> health & wellness lane card (binary PNG, or JPEG with ?format=jpg)
 POST /render/newsstand -> News Stand & Weather Report lane card (binary PNG)
 POST /render/traffic   -> Traffic Watch lane card (binary PNG)
+
+format=jpg (added Jul 2026): the Instagram Content Publishing API only accepts
+JPEG via image_url, while Facebook accepts the PNG cards as-is. Any card route
+in this file returns a JPEG when the request carries format=jpg (query param or
+body field); every existing caller that does not send it keeps receiving the
+same PNG as before.
 """
 
 from flask import Flask, request, send_file, Response
@@ -47,6 +53,24 @@ def _source(req):
         except Exception:
             pass
     return req.values
+
+
+def _send_image(img, base_name, src):
+    """Serve a rendered Pillow image as PNG (default) or JPEG (format=jpg).
+    Instagram's image_url ingestion accepts JPEG only; Facebook photo posts
+    accept the PNGs unchanged, so PNG remains the default for every existing
+    caller. JPEG conversion flattens transparency onto RGB before saving."""
+    fmt = (src.get("format") or request.args.get("format") or "").strip().lower()
+    buf = BytesIO()
+    if fmt in ("jpg", "jpeg"):
+        img.convert("RGB").save(buf, "JPEG", quality=92)
+        buf.seek(0)
+        return send_file(buf, mimetype="image/jpeg",
+                         download_name=f"{base_name}.jpg")
+    img.save(buf, "PNG", optimize=True)
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png",
+                     download_name=f"{base_name}.png")
 
 
 def _params(src):
@@ -90,11 +114,7 @@ def card():
         return Response('{"error":"headline is required"}', status=400,
                         mimetype="application/json")
     img = build_card(headline, source, category, date_str, handle)
-    buf = BytesIO()
-    img.save(buf, "PNG", optimize=True)
-    buf.seek(0)
-    return send_file(buf, mimetype="image/png",
-                     download_name="trendradar_card.png")
+    return _send_image(img, "trendradar_card", src)
 
 
 @app.route("/wisdom", methods=["GET", "POST"])
@@ -105,11 +125,7 @@ def wisdom():
         return Response('{"error":"proverb_original is required"}', status=400,
                         mimetype="application/json")
     img = build_wisdom_card(proverb, meaning, language, date_str, handle)
-    buf = BytesIO()
-    img.save(buf, "PNG", optimize=True)
-    buf.seek(0)
-    return send_file(buf, mimetype="image/png",
-                     download_name="trendradar_wisdom.png")
+    return _send_image(img, "trendradar_wisdom", src)
 
 
 @app.route("/reflection", methods=["GET", "POST"])
@@ -120,11 +136,7 @@ def reflection():
         return Response('{"error":"pull_quote is required"}', status=400,
                         mimetype="application/json")
     img = build_reflection_card(theme, quote, date_str, handle)
-    buf = BytesIO()
-    img.save(buf, "PNG", optimize=True)
-    buf.seek(0)
-    return send_file(buf, mimetype="image/png",
-                     download_name="trendradar_reflection.png")
+    return _send_image(img, "trendradar_reflection", src)
 
 
 def _health_params(src):
@@ -144,11 +156,7 @@ def health_lane():
                         mimetype="application/json")
     platform = "ig" if handle.startswith("@") else "fb"
     img = render_health_card(headline, source, date_str, platform=platform)
-    buf = BytesIO()
-    img.save(buf, "PNG", optimize=True)
-    buf.seek(0)
-    return send_file(buf, mimetype="image/png",
-                     download_name="trendradar_health.png")
+    return _send_image(img, "trendradar_health", src)
 
 
 def _results_params(src):
@@ -174,11 +182,7 @@ def results():
         return Response('{"error":"groups is required"}', status=400,
                         mimetype="application/json")
     img = build_results_card(title, groups, date_str, handle)
-    buf = BytesIO()
-    img.save(buf, "PNG", optimize=True)
-    buf.seek(0)
-    return send_file(buf, mimetype="image/png",
-                     download_name="trendradar_results.png")
+    return _send_image(img, "trendradar_results", src)
 
 
 
