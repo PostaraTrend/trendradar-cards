@@ -8,6 +8,7 @@ GET/POST /reflection  -> reflection-lane card (binary PNG, or JPEG with ?format=
 GET/POST /health      -> health & wellness lane card (binary PNG, or JPEG with ?format=jpg)
 POST /render/newsstand -> News Stand & Weather Report lane card (binary PNG)
 POST /render/traffic   -> Traffic Watch lane card (binary PNG)
+POST /render/peoples-voice -> People's Voice lane card (binary PNG, or JPEG with format=jpg)
 
 format=jpg (added Jul 2026): the Instagram Content Publishing API only accepts
 JPEG via image_url, while Facebook accepts the PNG cards as-is. Any card route
@@ -26,6 +27,7 @@ from trend_radar_card import build_card, build_wisdom_card, build_reflection_car
 from health_card import render_health_card
 from newsstand_card import newsstand_bp
 from traffic_card import traffic_bp
+from peoples_voice_card import render_peoples_voice
 
 app = Flask(__name__)
 from wahala_card import wahala_bp
@@ -186,6 +188,24 @@ def results():
     img = build_results_card(title, groups, date_str, handle)
     return _send_image(img, "trendradar_results", src)
 
+
+def _peoples_voice_params(src):
+    edition  = (src.get("edition_text") or "").strip()
+    date_str = (src.get("date_text") or "").strip()
+    question = (src.get("question") or "").strip() or None
+    cta      = (src.get("cta_text") or "Drop Your Answer In The Comments").strip()
+    return edition, date_str, question, cta
+
+
+@app.route("/render/peoples-voice", methods=["GET", "POST"])
+def peoples_voice():
+    src = _source(request)
+    edition, date_str, question, cta = _peoples_voice_params(src)
+    if not edition or not date_str:
+        return Response('{"error":"edition_text and date_text are required"}',
+                        status=400, mimetype="application/json")
+    img = render_peoples_voice(edition, date_str, question, cta_text=cta)
+    return _send_image(img, "trendradar_peoples_voice", src)
 
 
 if __name__ == "__main__":
