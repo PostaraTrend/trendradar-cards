@@ -1,8 +1,9 @@
 """
-People's Voice card renderer — TRNG (v1.1, Poppins match)
+People's Voice card renderer — TRNG (v1.2, Poppins match)
 Drop-in module for the trendradar-cards Flask/Pillow service.
-Fonts: Poppins Bold/SemiBold/Medium (ship the TTFs in the repo, e.g. fonts/).
+Fonts: Poppins Bold/SemiBold/Medium in the repo's fonts/ folder.
 """
+import os
 import random
 from PIL import Image, ImageDraw, ImageFont
 
@@ -15,7 +16,7 @@ AMBER       = (245, 166, 35)
 GOLD        = (222, 178, 92)
 BLUE        = (108, 148, 220)
 
-FONT_DIR = "/home/claude/pv/"   # in the repo: os.path.join(os.path.dirname(__file__), "fonts")
+FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts") + "/"
 def F(name, size): return ImageFont.truetype(FONT_DIR + name, size)
 
 def _tracked(d, y, text, font, fill, tracking, cx):
