@@ -1,5 +1,5 @@
 """
-People's Voice card renderer — TRNG (v1.2, Poppins match)
+People's Voice card renderer — TRNG (v1.3, Poppins match, resilient font loading)
 Drop-in module for the trendradar-cards Flask/Pillow service.
 Fonts: Poppins Bold/SemiBold/Medium in the repo's fonts/ folder.
 """
@@ -16,8 +16,20 @@ AMBER       = (245, 166, 35)
 GOLD        = (222, 178, 92)
 BLUE        = (108, 148, 220)
 
-FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts") + "/"
-def F(name, size): return ImageFont.truetype(FONT_DIR + name, size)
+_BASE = os.path.dirname(os.path.abspath(__file__))
+
+def _font_path(name):
+    """Find a font in fonts/ or the repo root; fail with a helpful listing."""
+    for cand in (os.path.join(_BASE, "fonts", name), os.path.join(_BASE, name)):
+        if os.path.exists(cand):
+            return cand
+    fonts_dir = os.path.join(_BASE, "fonts")
+    listing = sorted(os.listdir(fonts_dir)) if os.path.isdir(fonts_dir) else "NO fonts/ folder"
+    raise FileNotFoundError(
+        f"Font {name} not found. fonts/ contains: {listing}. "
+        f"Repo root contains: {sorted(f for f in os.listdir(_BASE) if not f.startswith('.'))[:40]}")
+
+def F(name, size): return ImageFont.truetype(_font_path(name), size)
 
 def _tracked(d, y, text, font, fill, tracking, cx):
     widths = [d.textlength(c, font=font) for c in text]
