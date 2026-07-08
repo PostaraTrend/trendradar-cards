@@ -219,8 +219,11 @@ def render_endpoint():
         return jsonify({"error": str(e)}), 500
     image_id = uuid.uuid4().hex
     _IMAGE_STORE[image_id] = (png, time.time())
-    image_url = url_for("col.serve_image", image_id=image_id, _external=True)
-    return jsonify({"image_url": image_url, "image_id": image_id})
+    return jsonify({
+        "image_url": url_for("col.serve_image", image_id=image_id, _external=True),
+        "image_url_jpg": url_for("col.serve_image_jpg", image_id=image_id, _external=True),
+        "image_id": image_id,
+    })
 
 
 @col_bp.route("/image/<image_id>.png", methods=["GET"])
@@ -230,3 +233,17 @@ def serve_image(image_id):
         return jsonify({"error": "expired or unknown image id"}), 404
     return send_file(io.BytesIO(entry[0]), mimetype="image/png",
                      download_name=f"trng_col_{image_id}.png")
+
+
+@col_bp.route("/image/<image_id>.jpg", methods=["GET"])
+def serve_image_jpg(image_id):
+    """Instagram's image_url ingestion accepts JPEG only; convert on demand."""
+    entry = _IMAGE_STORE.get(image_id)
+    if not entry:
+        return jsonify({"error": "expired or unknown image id"}), 404
+    img = Image.open(io.BytesIO(entry[0])).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=92)
+    buf.seek(0)
+    return send_file(buf, mimetype="image/jpeg",
+                     download_name=f"trng_col_{image_id}.jpg")
