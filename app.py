@@ -9,12 +9,21 @@ GET/POST /health      -> health & wellness lane card (binary PNG, or JPEG with ?
 POST /render/newsstand -> News Stand & Weather Report lane card (binary PNG)
 POST /render/traffic   -> Traffic Watch lane card (binary PNG)
 POST /render/peoples-voice -> People's Voice lane card (binary PNG, or JPEG with format=jpg)
+POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG + image_url_jpg)
+GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
 
 format=jpg (added Jul 2026): the Instagram Content Publishing API only accepts
 JPEG via image_url, while Facebook accepts the PNG cards as-is. Any card route
 in this file returns a JPEG when the request carries format=jpg (query param or
 body field); every existing caller that does not send it keeps receiving the
 same PNG as before.
+
+COL lane (added Jul 2026): unlike the binary-returning routes above, /col/render
+returns JSON with hosted URLs, because the COL n8n workflow publishes by handing
+Meta a fetchable URL. It returns both image_url (PNG, for Facebook) and
+image_url_jpg (JPEG, for Instagram). NOTE: the hosted images live in worker
+memory — this service must keep running with a single gunicorn worker
+(WEB_CONCURRENCY=1) or COL image serving breaks.
 """
 
 from flask import Flask, request, send_file, Response
@@ -28,6 +37,7 @@ from health_card import render_health_card
 from newsstand_card import newsstand_bp
 from traffic_card import traffic_bp
 from peoples_voice_card import render_peoples_voice
+from col_card import col_bp
 
 app = Flask(__name__)
 from wahala_card import wahala_bp
@@ -36,6 +46,7 @@ app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
 app.register_blueprint(jakpa_bp)
+app.register_blueprint(col_bp)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
