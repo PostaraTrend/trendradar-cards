@@ -152,45 +152,46 @@ def render_col_card(data: dict) -> bytes:
 
     y += 230
 
-    # --- GBP / EUR / Petrol row ---
-    cols = [
+    # --- GBP / EUR / Petrol row (boxes with no data are hidden; width adapts) ---
+    cols = [(label, val, prev) for (label, val, prev) in [
         ("POUND", data.get("gbp_official"), data.get("gbp_prev")),
         ("EURO", data.get("eur_official"), data.get("eur_prev")),
         ("PETROL /L", data.get("petrol"), data.get("petrol_prev")),
-    ]
-    box_w = (W - 100 - 40) // 3
-    for i, (label, val, prev) in enumerate(cols):
-        x0 = 50 + i * (box_w + 20)
-        d.rounded_rectangle([x0, y, x0 + box_w, y + 165], radius=24, fill=BRAND["bg_panel"])
-        d.text((x0 + 28, y + 20), label, font=f_small, fill=BRAND["muted"])
-        d.text((x0 + 28, y + 62), _fmt_naira(val), font=f_mid, fill=BRAND["text"])
-        ddir = _change_dir(val, prev)
-        d.text((x0 + 28, y + 122), f"{_arrow(ddir)} vs yesterday", font=f_small, fill=_dir_color(ddir))
+    ] if val is not None]
+    if cols:
+        box_w = (W - 100 - 20 * (len(cols) - 1)) // len(cols)
+        for i, (label, val, prev) in enumerate(cols):
+            x0 = 50 + i * (box_w + 20)
+            d.rounded_rectangle([x0, y, x0 + box_w, y + 165], radius=24, fill=BRAND["bg_panel"])
+            d.text((x0 + 28, y + 20), label, font=f_small, fill=BRAND["muted"])
+            d.text((x0 + 28, y + 62), _fmt_naira(val), font=f_mid, fill=BRAND["text"])
+            ddir = _change_dir(val, prev)
+            d.text((x0 + 28, y + 122), f"{_arrow(ddir)} vs yesterday", font=f_small, fill=_dir_color(ddir))
+        y += 195
 
-    y += 195
-
-    # --- Staples panel (up to 9 items; blank items filtered upstream).
+    # --- Staples panel (up to 9 items; hidden entirely when no items provided).
     #     Row height and fonts adapt to the item count so few items render
     #     large and the full nine still clear the footer. ---
     staples = (data.get("staples") or [])[:9]
-    n = max(1, len(staples))
-    footer_top = H - 120
-    avail = footer_top - y - 10          # space the panel may occupy
-    row_h = min(68, (avail - 84 - 8) // n)
-    f_item = _font(FONT_REG, max(28, int(row_h * 0.56)))
-    f_item_price = _font(FONT_BOLD, max(30, int(row_h * 0.62)))
-    panel_h = 84 + n * row_h + 8
-    d.rounded_rectangle([50, y, W - 50, y + panel_h], radius=28, fill=BRAND["bg_panel"])
-    d.text((90, y + 24), "FOOD & KITCHEN MARKET CHECK", font=f_label, fill=BRAND["accent"])
-    sy = y + 84
-    for s in staples:
-        d.text((90, sy), s.get("name", ""), font=f_item, fill=BRAND["text"])
-        price_txt = _fmt_naira(s.get("price"))
-        sdir = _change_dir(s.get("price"), s.get("prev"))
-        ptx = W - 110 - d.textlength(price_txt, font=f_item_price) - 46
-        d.text((ptx, sy), price_txt, font=f_item_price, fill=BRAND["text"])
-        d.text((W - 130, sy + 2), _arrow(sdir), font=f_item, fill=_dir_color(sdir))
-        sy += row_h
+    if staples:
+        n = len(staples)
+        footer_top = H - 120
+        avail = footer_top - y - 10          # space the panel may occupy
+        row_h = min(68, (avail - 84 - 8) // n)
+        f_item = _font(FONT_REG, max(28, int(row_h * 0.56)))
+        f_item_price = _font(FONT_BOLD, max(30, int(row_h * 0.62)))
+        panel_h = 84 + n * row_h + 8
+        d.rounded_rectangle([50, y, W - 50, y + panel_h], radius=28, fill=BRAND["bg_panel"])
+        d.text((90, y + 24), "FOOD & KITCHEN MARKET CHECK", font=f_label, fill=BRAND["accent"])
+        sy = y + 84
+        for s in staples:
+            d.text((90, sy), s.get("name", ""), font=f_item, fill=BRAND["text"])
+            price_txt = _fmt_naira(s.get("price"))
+            sdir = _change_dir(s.get("price"), s.get("prev"))
+            ptx = W - 110 - d.textlength(price_txt, font=f_item_price) - 46
+            d.text((ptx, sy), price_txt, font=f_item_price, fill=BRAND["text"])
+            d.text((W - 130, sy + 2), _arrow(sdir), font=f_item, fill=_dir_color(sdir))
+            sy += row_h
 
     # Footer
     d.rectangle([0, H - 120, W, H], fill=BRAND["bg_panel"])
