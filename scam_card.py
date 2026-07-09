@@ -7,8 +7,9 @@ Register alongside the COL blueprint:
     app.register_blueprint(scam_bp)
 
 Endpoints:
-    POST /scam/render          -> generates the card, returns {"image_url": "..."}
-    GET  /scam/image/<id>.png  -> serves the generated PNG
+    POST /scam/render          -> generates the card, returns {"image_url": "...", "image_url_jpg": "..."}
+    GET  /scam/image/<id>.png  -> serves the generated PNG (Facebook fetches this)
+    GET  /scam/image/<id>.jpg  -> JPEG conversion (Instagram fetches this — IG accepts JPEG only)
 """
 
 import io
@@ -204,6 +205,7 @@ def render_endpoint():
     _IMAGE_STORE[image_id] = (png, time.time())
     return jsonify({
         "image_url": url_for("scam.serve_image", image_id=image_id, _external=True),
+        "image_url_jpg": url_for("scam.serve_image_jpg", image_id=image_id, _external=True),
         "image_id": image_id,
     })
 
@@ -215,3 +217,17 @@ def serve_image(image_id):
         return jsonify({"error": "expired or unknown image id"}), 404
     return send_file(io.BytesIO(entry[0]), mimetype="image/png",
                      download_name=f"trng_scam_{image_id}.png")
+
+
+@scam_bp.route("/image/<image_id>.jpg", methods=["GET"])
+def serve_image_jpg(image_id):
+    """Instagram's image_url ingestion accepts JPEG only; convert on demand."""
+    entry = _IMAGE_STORE.get(image_id)
+    if not entry:
+        return jsonify({"error": "expired or unknown image id"}), 404
+    img = Image.open(io.BytesIO(entry[0])).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=92)
+    buf.seek(0)
+    return send_file(buf, mimetype="image/jpeg",
+                     download_name=f"trng_scam_{image_id}.jpg")
