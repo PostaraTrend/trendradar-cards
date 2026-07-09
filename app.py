@@ -11,6 +11,8 @@ POST /render/traffic   -> Traffic Watch lane card (binary PNG)
 POST /render/peoples-voice -> People's Voice lane card (binary PNG, or JPEG with format=jpg)
 POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG + image_url_jpg)
 GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
+POST /scam/render      -> Shine Your Eye scam-alert card (JSON: hosted image_url PNG + image_url_jpg)
+GET  /scam/image/<id>.png / .jpg -> serves a rendered Shine Your Eye card (1-hour TTL)
 
 format=jpg (added Jul 2026): the Instagram Content Publishing API only accepts
 JPEG via image_url, while Facebook accepts the PNG cards as-is. Any card route
@@ -24,6 +26,10 @@ Meta a fetchable URL. It returns both image_url (PNG, for Facebook) and
 image_url_jpg (JPEG, for Instagram). NOTE: the hosted images live in worker
 memory — this service must keep running with a single gunicorn worker
 (WEB_CONCURRENCY=1) or COL image serving breaks.
+
+Shine Your Eye lane (added Jul 2026): same hosted-URL pattern as COL —
+/scam/render returns JSON with image_url (PNG, Facebook) and image_url_jpg
+(JPEG, Instagram). Inherits the single-worker constraint above.
 """
 
 from flask import Flask, request, send_file, Response
@@ -42,11 +48,13 @@ from col_card import col_bp
 app = Flask(__name__)
 from wahala_card import wahala_bp
 from jakpa_card import jakpa_bp
+from scam_card import scam_bp
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
 app.register_blueprint(jakpa_bp)
 app.register_blueprint(col_bp)
+app.register_blueprint(scam_bp)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
