@@ -39,6 +39,7 @@ def _find_font_dir():
     here = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         os.environ.get("PROMO_FONT_DIR", ""),
+        here,
         os.path.join(here, "fonts"),
         os.path.join(here, "static", "fonts"),
         os.path.join(here, "assets", "fonts"),
