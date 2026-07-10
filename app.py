@@ -13,6 +13,7 @@ POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG +
 GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
 POST /scam/render      -> Shine Your Eye scam-alert card (JSON: hosted image_url PNG + image_url_jpg)
 GET  /scam/image/<id>.png / .jpg -> serves a rendered Shine Your Eye card (1-hour TTL)
+POST /promo            -> Level Up promo-lane card, Project Harvest (binary JPEG)
 POST /host             -> host any rendered card binary; returns image_url + image_url_jpg (1-hour TTL)
 GET  /hosted/<id>.png / .jpg -> serves a hosted card (generic, any lane; IG uses the .jpg)
 
@@ -32,6 +33,10 @@ memory — this service must keep running with a single gunicorn worker
 Shine Your Eye lane (added Jul 2026): same hosted-URL pattern as COL —
 /scam/render returns JSON with image_url (PNG, Facebook) and image_url_jpg
 (JPEG, Instagram). Inherits the single-worker constraint above.
+
+Level Up promo lane (added Jul 2026, Project Harvest / SOP-HRV-001): /promo
+returns the card binary directly (JPEG); the Publisher workflow posts that
+binary to /host and publishes via the hosted image_url_jpg.
 """
 
 from flask import Flask, request, send_file, Response
@@ -51,12 +56,14 @@ app = Flask(__name__)
 from wahala_card import wahala_bp
 from jakpa_card import jakpa_bp
 from scam_card import scam_bp
+from HRV_promo_blueprint import promo_bp
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
 app.register_blueprint(jakpa_bp)
 app.register_blueprint(col_bp)
 app.register_blueprint(scam_bp)
+app.register_blueprint(promo_bp)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
