@@ -18,6 +18,8 @@ POST /host             -> host any rendered card binary; returns image_url + ima
 GET  /hosted/<id>.png / .jpg -> serves a hosted card (generic, any lane; IG uses the .jpg)
 POST /naijalens/render -> Naija Lens photo card (JSON: image_url; photo treatment
                           with quality gate, enhancement pass, hook + credit overlay)
+POST /naturals/render  -> Naija Naturals nature card (JSON: image_url; photo treatment
+                          with quality gate, enhancement pass, location bar + credit)
 
 format=jpg (added Jul 2026): the Instagram Content Publishing API only accepts
 JPEG via image_url, while Facebook accepts the PNG cards as-is. Any card route
@@ -66,6 +68,7 @@ from jakpa_card import jakpa_bp
 from scam_card import scam_bp
 from HRV_promo_blueprint import promo_bp
 from naijalens_route import naijalens          # NAIJA LENS (added Jul 2026)
+from naturals_route import naturals            # NAIJA NATURALS (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -74,6 +77,7 @@ app.register_blueprint(col_bp)
 app.register_blueprint(scam_bp)
 app.register_blueprint(promo_bp)
 app.register_blueprint(naijalens)              # NAIJA LENS (added Jul 2026)
+app.register_blueprint(naturals)               # NAIJA NATURALS (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
