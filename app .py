@@ -72,7 +72,7 @@ app.register_blueprint(wahala_bp)
 app.register_blueprint(jakpa_bp)
 app.register_blueprint(col_bp)
 app.register_blueprint(scam_bp)
-app.register_blueprint(promo_bp)
+app.register_blueprint(naijalens)
 app.register_blueprint(naijalens)              # NAIJA LENS (added Jul 2026)
 
 MAX_HEADLINE = 240
