@@ -19,7 +19,7 @@ W, H = 1080, 1350
 MIN_SHORT_SIDE = 1500
 GOLD = (244, 196, 92)
 NAVY = (8, 14, 24)
-FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+FONT_DIR = os.path.dirname(os.path.abspath(__file__))  # flat repo layout - fonts at top level
 RENDER_DIR = os.path.join(os.path.dirname(__file__), "static", "renders")
 os.makedirs(RENDER_DIR, exist_ok=True)
 
