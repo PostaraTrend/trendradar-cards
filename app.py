@@ -20,6 +20,10 @@ POST /naijalens/render -> Naija Lens photo card (JSON: image_url; photo treatmen
                           with quality gate, enhancement pass, hook + credit overlay)
 POST /naturals/render  -> Naija Naturals nature card (JSON: image_url; photo treatment
                           with quality gate, enhancement pass, location bar + credit)
+GET/POST /genz/take      -> GenZ Weekend lane: Rate This Take card (binary JPEG by
+                            default, or PNG with ?format=png)
+GET/POST /genz/childhood -> GenZ Weekend lane: Naija Childhood Check card (binary
+                            JPEG by default, or PNG with ?format=png)
 
 format=jpg (added Jul 2026): the Instagram Content Publishing API only accepts
 JPEG via image_url, while Facebook accepts the PNG cards as-is. Any card route
@@ -47,6 +51,21 @@ Naija Lens lane (added Jul 2026): /naijalens/render accepts JSON
 photo, applies the quality gate (min 1500px short side, 422 on failure), the
 enhancement pass, and the locked treatment, then returns JSON with a hosted
 image_url served from /static/naijalens/. JPEG output, IG-compatible directly.
+
+Naija Naturals lane (added Jul 2026): /naturals/render accepts JSON
+(photo_url, location, credit), downloads the photo, applies the same quality
+gate (min 1500px short side, 422 on failure) and an enhancement pass, then the
+Naturals treatment: half-sun lane mark top-left and a slim bottom location bar
+with gold edge tick (no scrim hook — distinct from Naija Lens). Returns JSON
+with a hosted image_url served from /static/renders/. JPEG output,
+IG-compatible directly.
+
+GenZ Weekend lane (added Jul 2026): /genz/take and /genz/childhood live in
+genz_cards.py. Unlike the other card routes, these default to JPEG (the GenZ
+n8n workflow feeds the same URL to both Facebook, as a fetched binary, and
+Instagram, which requires JPEG); pass format=png for a PNG. Both support GET
+with query parameters so the URL itself is a fetchable image — no /host step
+needed. Fonts self-download into ./fonts on first request.
 """
 
 from flask import Flask, request, send_file, Response
@@ -69,15 +88,16 @@ from scam_card import scam_bp
 from HRV_promo_blueprint import promo_bp
 from naijalens_route import naijalens          # NAIJA LENS (added Jul 2026)
 from naturals_route import naturals            # NAIJA NATURALS (added Jul 2026)
+from genz_cards import genz_bp                 # GENZ WEEKEND (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
 app.register_blueprint(jakpa_bp)
 app.register_blueprint(col_bp)
 app.register_blueprint(scam_bp)
-app.register_blueprint(promo_bp)
 app.register_blueprint(naijalens)              # NAIJA LENS (added Jul 2026)
 app.register_blueprint(naturals)               # NAIJA NATURALS (added Jul 2026)
+app.register_blueprint(genz_bp)                # GENZ WEEKEND (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
