@@ -8,7 +8,7 @@ Params:
     headline  - main statement (auto-sized, wrapped)
     body      - supporting line (wrapped)
     v         - optional cache buster, ignored
-Returns: 1080x1080 PNG
+Returns: 1080x1080 JPEG (Instagram media containers require JPEG)
 
 Register in app.py:
     from creator_cards import creator_bp
@@ -16,8 +16,11 @@ Register in app.py:
 """
 
 import io
+import os
 from flask import Blueprint, request, send_file
 from PIL import Image, ImageDraw, ImageFont
+
+_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
 creator_bp = Blueprint("creator_cards", __name__)
 
@@ -32,11 +35,14 @@ WHITE = "#FFFFFF"
 W = H = 1080
 MARGIN = 70
 
+# Bundled fonts first (fonts/ directory beside this module), then system paths.
 FONT_CANDIDATES_BOLD = [
+    os.path.join(_FONT_DIR, "DejaVuSans-Bold.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
 ]
 FONT_CANDIDATES_REG = [
+    os.path.join(_FONT_DIR, "DejaVuSans.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 ]
@@ -82,10 +88,11 @@ def _fit_headline(draw, text, max_width, max_height):
 
 @creator_bp.route("/render/creator-card")
 def render_creator_card():
-    pill = request.args.get("pill", "CREATOR TIPS").upper()
-    tip_no = request.args.get("tip_no", "").upper()
-    headline = request.args.get("headline", "").strip()
-    body = request.args.get("body", "").strip()
+    # Length caps: this is a public endpoint, and no legitimate tip exceeds these.
+    pill = request.args.get("pill", "CREATOR TIPS").upper()[:24]
+    tip_no = request.args.get("tip_no", "").upper()[:12]
+    headline = request.args.get("headline", "").strip()[:160]
+    body = request.args.get("body", "").strip()[:320]
 
     img = Image.new("RGB", (W, H), NAVY)
     d = ImageDraw.Draw(img)
