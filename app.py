@@ -9,6 +9,7 @@ GET/POST /health      -> health & wellness lane card (binary PNG, or JPEG with ?
 POST /render/newsstand -> News Stand & Weather Report lane card (binary PNG)
 POST /render/traffic   -> Traffic Watch lane card (binary PNG)
 POST /render/peoples-voice -> People's Voice lane card (binary PNG, or JPEG with format=jpg)
+GET  /render/creator-card -> Creator Tips lane card (binary JPEG; IG-compatible directly)
 POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG + image_url_jpg)
 GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
 POST /scam/render      -> Shine Your Eye scam-alert card (JSON: hosted image_url PNG + image_url_jpg)
@@ -47,6 +48,11 @@ Naija Lens lane (added Jul 2026): /naijalens/render accepts JSON
 photo, applies the quality gate (min 1500px short side, 422 on failure), the
 enhancement pass, and the locked treatment, then returns JSON with a hosted
 image_url served from /static/naijalens/. JPEG output, IG-compatible directly.
+
+Creator Tips lane (added Jul 2026): /render/creator-card takes GET query
+params (pill, tip_no, headline, body) and returns the card binary directly as
+JPEG — the same URL therefore serves both the workflow's binary download for
+Facebook and Instagram's image_url ingestion, with no format=jpg needed.
 """
 
 from flask import Flask, request, send_file, Response
@@ -70,6 +76,7 @@ from HRV_promo_blueprint import promo_bp
 from naijalens_route import naijalens          # NAIJA LENS (added Jul 2026)
 from heritage_route import heritage            # HERITAGE (added Jul 2026)
 from naturals_route import naturals            # NAIJA NATURALS (added Jul 2026)
+from creator_cards import creator_bp           # CREATOR TIPS (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -80,6 +87,7 @@ app.register_blueprint(promo_bp)
 app.register_blueprint(naijalens)              # NAIJA LENS (added Jul 2026)
 app.register_blueprint(heritage)               # HERITAGE (added Jul 2026)
 app.register_blueprint(naturals)               # NAIJA NATURALS (added Jul 2026)
+app.register_blueprint(creator_bp)             # CREATOR TIPS (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
