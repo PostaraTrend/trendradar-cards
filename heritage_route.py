@@ -127,10 +127,14 @@ def _enhance(img):
 
 def _footer(d, right_text):
     d.rectangle([0, 1250, W, H], fill=FOOTER_BG)
-    d.text((90, 1278), "TREND RADAR NG", font=_font("Poppins-Bold.ttf", 38),
-           fill=WHITE)
-    f = _font("Poppins-SemiBold.ttf", 34)
-    d.text((W - 90, 1284), right_text, font=f, fill=GOLD, anchor="ra")
+    wm_font = _font("Poppins-Bold.ttf", 38)
+    d.text((90, 1278), "TREND RADAR NG", font=wm_font, fill=WHITE)
+    # right text must fit the space left of the wordmark; shrink, then truncate
+    avail = (W - 90) - (90 + d.textlength("TREND RADAR NG", font=wm_font)) - 40
+    f = _fit_text(d, right_text, "Poppins-SemiBold.ttf", 30, avail, floor=20)
+    while d.textlength(right_text, font=f) > avail and len(right_text) > 8:
+        right_text = right_text[:-2].rstrip() + "…"
+    d.text((W - 90, 1288), right_text, font=f, fill=GOLD, anchor="ra")
 
 def _chip(d, x, y, text, bg):
     f = _font("Poppins-Bold.ttf", 38)
