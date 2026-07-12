@@ -40,9 +40,23 @@ def _font(size, bold=False):
         return ImageFont.load_default()
 
 def _fetch_image(url):
-    resp = requests.get(url, timeout=25, headers={"User-Agent": "TRNG-MamasKitchen/1.0"})
-    resp.raise_for_status()
-    return Image.open(io.BytesIO(resp.content)).convert("RGB")
+    headers = {
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/126.0 Safari/537.36 TRNG-MamasKitchen/1.0 "
+                       "(https://trendradar-cards.onrender.com; admin@postaratrend.ca)"),
+        "Accept": "image/*,*/*;q=0.8",
+        "Referer": "https://commons.wikimedia.org/",
+    }
+    last_exc = None
+    for _ in range(2):
+        try:
+            resp = requests.get(url, timeout=25, headers=headers, allow_redirects=True)
+            resp.raise_for_status()
+            return Image.open(io.BytesIO(resp.content)).convert("RGB")
+        except Exception as exc:
+            last_exc = exc
+    raise last_exc
 
 def _cover_crop(img, target_w, target_h):
     return ImageOps.fit(img, (target_w, target_h), Image.LANCZOS)
