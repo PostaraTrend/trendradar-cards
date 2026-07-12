@@ -21,6 +21,9 @@ POST /naijalens/render -> Naija Lens photo card (JSON: image_url; photo treatmen
                           with quality gate, enhancement pass, hook + credit overlay)
 POST /naturals/render  -> Naija Naturals nature card (JSON: image_url; photo treatment
                           with quality gate, enhancement pass, location bar + credit)
+POST /mk/card          -> Mama's Kitchen recipe card (binary PNG)
+GET  /mk/last-card     -> serves the most recently rendered Mama's Kitchen card
+GET  /mk/health        -> Mama's Kitchen lane health check
 
 format=jpg (added Jul 2026): the Instagram Content Publishing API only accepts
 JPEG via image_url, while Facebook accepts the PNG cards as-is. Any card route
@@ -53,6 +56,11 @@ Creator Tips lane (added Jul 2026): /render/creator-card takes GET query
 params (pill, tip_no, headline, body) and returns the card binary directly as
 JPEG — the same URL therefore serves both the workflow's binary download for
 Facebook and Instagram's image_url ingestion, with no format=jpg needed.
+
+Mama's Kitchen lane (added Jul 2026): /mk/card renders the recipe card
+(binary PNG) and stores the latest render in worker memory; /mk/last-card
+serves it so the n8n Vision Gate can fetch the finished card for the AI
+photo-match check before publishing. Inherits the single-worker constraint.
 """
 
 from flask import Flask, request, send_file, Response
@@ -77,6 +85,7 @@ from naijalens_route import naijalens          # NAIJA LENS (added Jul 2026)
 from heritage_route import heritage            # HERITAGE (added Jul 2026)
 from naturals_route import naturals            # NAIJA NATURALS (added Jul 2026)
 from creator_cards import creator_bp           # CREATOR TIPS (added Jul 2026)
+from mamas_kitchen_cards import mk_bp          # MAMA'S KITCHEN (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -88,6 +97,7 @@ app.register_blueprint(naijalens)              # NAIJA LENS (added Jul 2026)
 app.register_blueprint(heritage)               # HERITAGE (added Jul 2026)
 app.register_blueprint(naturals)               # NAIJA NATURALS (added Jul 2026)
 app.register_blueprint(creator_bp)             # CREATOR TIPS (added Jul 2026)
+app.register_blueprint(mk_bp)                  # MAMA'S KITCHEN (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
