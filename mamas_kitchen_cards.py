@@ -13,6 +13,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 mk_bp = Blueprint("mk", __name__, url_prefix="/mk")
 
+_LAST_CARD = {"png": None}
+
 CARD_W, CARD_H = 1080, 1350
 PHOTO_H = 830
 
@@ -160,5 +162,14 @@ def render_card():
     buf = io.BytesIO()
     card.save(buf, "PNG")
     buf.seek(0)
-    return send_file(buf, mimetype="image/png",
+    _LAST_CARD["png"] = buf.getvalue()
+    return send_file(io.BytesIO(_LAST_CARD["png"]), mimetype="image/png",
                      download_name=f"mk_{dish_name.lower().replace(' ', '_')}.png")
+
+
+@mk_bp.route("/last-card", methods=["GET"])
+def last_card():
+    if not _LAST_CARD["png"]:
+        return jsonify({"error": "no card rendered yet"}), 404
+    return send_file(io.BytesIO(_LAST_CARD["png"]), mimetype="image/png",
+                     download_name="mk_last_card.png")
