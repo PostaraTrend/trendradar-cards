@@ -87,7 +87,7 @@ def _wrap(draw, text, font, max_width, max_lines):
     return lines, truncated
 
 
-def _draw_card(title, summary, comments_count, date_label):
+def _draw_card(title, summary, comments_count, date_label, camps=None):
     img = Image.new("RGB", (W, H), NAVY)
     d = ImageDraw.Draw(img)
 
@@ -119,31 +119,76 @@ def _draw_card(title, summary, comments_count, date_label):
     else:
         y += 30
 
-    # Title (max 4 lines)
-    f_title = _font(62, "bold")
-    title_lines, _ = _wrap(d, title, f_title, SAFE_W, 4)
+    # Title (max 3 lines with chart, 4 without; shrink font if it will not fit)
+    max_t = 3 if camps else 4
+    t_size = 62
+    f_title = _font(t_size, "bold")
+    title_lines, t_trunc = _wrap(d, title, f_title, SAFE_W, max_t)
+    while t_trunc and t_size > 44:
+        t_size -= 6
+        f_title = _font(t_size, "bold")
+        title_lines, t_trunc = _wrap(d, title, f_title, SAFE_W, max_t)
     for line in title_lines:
         d.text((MARGIN, y), line, font=f_title, fill=WHITE)
-        y += 62 + 16
+        y += t_size + 16
 
     # Gold divider
     y += 22
     d.rectangle([MARGIN, y, MARGIN + 180, y + 8], fill=GOLD)
     y += 8 + 44
 
-    # Summary (max 9 lines)
+    # Summary (max 4 lines with chart, 9 without)
     f_body = _font(40, "regular")
-    body_lines, _ = _wrap(d, summary, f_body, SAFE_W, 9)
+    body_lines, _ = _wrap(d, summary, f_body, SAFE_W, 4 if camps else 9)
     for line in body_lines:
         d.text((MARGIN, y), line, font=f_body, fill=SOFT)
         y += 40 + 18
 
-    # Stat line
-    if comments_count:
-        f_stat = _font(34, "semibold")
-        stat = "Collated from {} community voices".format(comments_count)
-        sy = H - 210
-        d.text((MARGIN, sy), stat, font=f_stat, fill=GOLD)
+    if camps:
+        # ---- Share of voice bar chart ----
+        y += 26
+        f_head = _font(32, "bold")
+        d.text((MARGIN, y), "S H A R E   O F   V O I C E", font=f_head, fill=GOLD)
+        y += 32 + 30
+
+        f_label = _font(34, "semibold")
+        f_pct = _font(34, "bold")
+        track_h = 26
+        # top 3 camps by percentage
+        rows = sorted(camps, key=lambda c: -float(c.get("pct", 0)))[:3]
+        for c in rows:
+            label = str(c.get("label", "")).strip()
+            try:
+                pct = max(0, min(100, float(c.get("pct", 0))))
+            except (TypeError, ValueError):
+                pct = 0
+            pct_txt = "{}%".format(int(round(pct)))
+            pw = _text_w(d, pct_txt, f_pct)
+            # label row: label left, percentage right
+            lab_lines, _ = _wrap(d, label, f_label, SAFE_W - pw - 30, 1)
+            d.text((MARGIN, y), lab_lines[0] if lab_lines else "", font=f_label, fill=WHITE)
+            d.text((W - MARGIN - pw, y), pct_txt, font=f_pct, fill=GOLD)
+            y += 34 + 12
+            # bar track + gold fill
+            d.rounded_rectangle([MARGIN, y, MARGIN + SAFE_W, y + track_h], radius=13, fill=(30, 58, 88))
+            fill_w = int(SAFE_W * pct / 100.0)
+            if fill_w > track_h:
+                d.rounded_rectangle([MARGIN, y, MARGIN + fill_w, y + track_h], radius=13, fill=GOLD)
+            elif fill_w > 0:
+                d.ellipse([MARGIN, y, MARGIN + track_h, y + track_h], fill=GOLD)
+            y += track_h + 30
+
+        # stat under the chart
+        if comments_count:
+            f_stat = _font(30, "semibold")
+            d.text((MARGIN, y), "Collated from {} community voices".format(comments_count), font=f_stat, fill=SOFT)
+    else:
+        # Stat line (chartless layout)
+        if comments_count:
+            f_stat = _font(34, "semibold")
+            stat = "Collated from {} community voices".format(comments_count)
+            sy = H - 210
+            d.text((MARGIN, sy), stat, font=f_stat, fill=GOLD)
 
     # Footer
     d.rectangle([0, H - 96, W, H - 86], fill=GOLD)
@@ -183,7 +228,18 @@ def verdict_render():
     comments_count = g("comments_count", "")
     date_label = g("date_label", "")
     fmt = g("format", "png")
+    camps = data.get("camps")
+    if camps is None:
+        import json as _json
+        raw_c = request.args.get("camps", "")
+        if raw_c:
+            try:
+                camps = _json.loads(raw_c)
+            except ValueError:
+                camps = None
+    if camps is not None and not isinstance(camps, list):
+        camps = None
     if not summary:
         return jsonify({"error": "summary is required"}), 400
-    img = _draw_card(title, summary, comments_count, date_label)
+    img = _draw_card(title, summary, comments_count, date_label, camps)
     return jsonify(_save_and_url(img, fmt))
