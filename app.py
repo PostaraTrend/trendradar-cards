@@ -11,6 +11,8 @@ POST /render/traffic   -> Traffic Watch lane card (binary PNG)
 POST /render/peoples-voice -> People's Voice lane card (binary PNG, or JPEG with format=jpg)
 GET  /render/creator-card -> Creator Tips lane card (binary JPEG; IG-compatible directly)
 GET  /render/advertorial -> Advertorial lane card, SOP-ADV-001 (binary JPEG, or PNG with ?format=png)
+GET/POST /render/verdict -> People's Verdict lane card (binary PNG, or JPEG with format=jpg)
+GET  /render/verdict/health -> People's Verdict lane health check (added Jul 2026)
 POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG + image_url_jpg)
 GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
 POST /scam/render      -> Shine Your Eye scam-alert card (JSON: hosted image_url PNG + image_url_jpg)
@@ -87,6 +89,13 @@ PostaraTrend Autopilot lanes (added Jul 2026): /receipts/render and
 /tips/render accept JSON and return JSON with a hosted url served from
 /static/postara/. JPEG output, PostaraTrend branding, same contraction gate.
 Routes live in postara_cards.py, blueprint postara_bp.
+
+People's Verdict lane (added Jul 2026): /render/verdict accepts JSON
+(title, summary, camps [{label, pct}], comments_count, date_label) and returns
+the card binary directly (PNG default, JPEG with format=jpg). Navy/gold card
+with a SHARE OF VOICE bar chart of the community camps. Same contraction gate
+as the other lanes (422; possessives pass). Stateless — no hosting, no worker
+memory. Route lives in verdict_card.py, blueprint verdict_bp.
 """
 
 from flask import Flask, request, send_file, Response
@@ -115,6 +124,7 @@ from mamas_kitchen_cards import mk_bp          # MAMA'S KITCHEN (added Jul 2026)
 from advertorial_route import register_advertorial  # ADVERTORIAL (added Jul 2026, SOP-ADV-001)
 from daily_brief_cards import brief_bp         # NAIJA DAILY BRIEF (added Jul 2026)
 from postara_cards import postara_bp           # POSTARATREND AUTOPILOT (added Jul 2026)
+from verdict_card import verdict_bp            # PEOPLE'S VERDICT (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -130,6 +140,7 @@ app.register_blueprint(mk_bp)                  # MAMA'S KITCHEN (added Jul 2026)
 register_advertorial(app)                      # ADVERTORIAL (added Jul 2026, SOP-ADV-001)
 app.register_blueprint(brief_bp)               # NAIJA DAILY BRIEF (added Jul 2026)
 app.register_blueprint(postara_bp)             # POSTARATREND AUTOPILOT (added Jul 2026)
+app.register_blueprint(verdict_bp)             # PEOPLE'S VERDICT (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
