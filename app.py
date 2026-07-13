@@ -25,6 +25,11 @@ POST /naturals/render  -> Naija Naturals nature card (JSON: image_url; photo tre
 POST /mk/card          -> Mama's Kitchen recipe card (binary PNG)
 GET  /mk/last-card     -> serves the most recently rendered Mama's Kitchen card
 GET  /mk/health        -> Mama's Kitchen lane health check
+GET  /brief/health     -> Naija Daily Brief lane health check (added Jul 2026)
+POST /brief/render     -> Naija Daily Brief card (JSON: hosted url; static/brief/)
+GET  /postara/health   -> PostaraTrend Autopilot lanes health check (added Jul 2026)
+POST /receipts/render  -> Autopilot Receipts card (JSON: hosted url; static/postara/)
+POST /tips/render      -> SMB Tips card (JSON: hosted url; static/postara/)
 
 format=jpg (added Jul 2026): the Instagram Content Publishing API only accepts
 JPEG via image_url, while Facebook accepts the PNG cards as-is. Any card route
@@ -71,6 +76,17 @@ image_url ingestion, like Creator Tips. Every card carries a permanent
 "Sponsored" strip; is_sample=true adds the SAMPLE CAMPAIGN ribbon and
 powered_by renders the white-label attribution line. Route lives in
 advertorial_route.py, registered via register_advertorial(app).
+
+Naija Daily Brief lane (added Jul 2026): /brief/render accepts JSON
+(date_label, traffic, weather, football) and returns JSON with a hosted url
+served from /static/brief/. JPEG output. Empty slots render a grey quiet
+fallback; contractions in any slot return 422 (house style gate).
+Route lives in daily_brief_cards.py, blueprint brief_bp.
+
+PostaraTrend Autopilot lanes (added Jul 2026): /receipts/render and
+/tips/render accept JSON and return JSON with a hosted url served from
+/static/postara/. JPEG output, PostaraTrend branding, same contraction gate.
+Routes live in postara_cards.py, blueprint postara_bp.
 """
 
 from flask import Flask, request, send_file, Response
@@ -97,6 +113,8 @@ from naturals_route import naturals            # NAIJA NATURALS (added Jul 2026)
 from creator_cards import creator_bp           # CREATOR TIPS (added Jul 2026)
 from mamas_kitchen_cards import mk_bp          # MAMA'S KITCHEN (added Jul 2026)
 from advertorial_route import register_advertorial  # ADVERTORIAL (added Jul 2026, SOP-ADV-001)
+from daily_brief_cards import brief_bp         # NAIJA DAILY BRIEF (added Jul 2026)
+from postara_cards import postara_bp           # POSTARATREND AUTOPILOT (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -110,6 +128,8 @@ app.register_blueprint(naturals)               # NAIJA NATURALS (added Jul 2026)
 app.register_blueprint(creator_bp)             # CREATOR TIPS (added Jul 2026)
 app.register_blueprint(mk_bp)                  # MAMA'S KITCHEN (added Jul 2026)
 register_advertorial(app)                      # ADVERTORIAL (added Jul 2026, SOP-ADV-001)
+app.register_blueprint(brief_bp)               # NAIJA DAILY BRIEF (added Jul 2026)
+app.register_blueprint(postara_bp)             # POSTARATREND AUTOPILOT (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
