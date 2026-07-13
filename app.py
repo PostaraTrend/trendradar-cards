@@ -10,6 +10,7 @@ POST /render/newsstand -> News Stand & Weather Report lane card (binary PNG)
 POST /render/traffic   -> Traffic Watch lane card (binary PNG)
 POST /render/peoples-voice -> People's Voice lane card (binary PNG, or JPEG with format=jpg)
 GET  /render/creator-card -> Creator Tips lane card (binary JPEG; IG-compatible directly)
+GET  /render/advertorial -> Advertorial lane card, SOP-ADV-001 (binary JPEG, or PNG with ?format=png)
 POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG + image_url_jpg)
 GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
 POST /scam/render      -> Shine Your Eye scam-alert card (JSON: hosted image_url PNG + image_url_jpg)
@@ -61,6 +62,15 @@ Mama's Kitchen lane (added Jul 2026): /mk/card renders the recipe card
 (binary PNG) and stores the latest render in worker memory; /mk/last-card
 serves it so the n8n Vision Gate can fetch the finished card for the AI
 photo-match check before publishing. Inherits the single-worker constraint.
+
+Advertorial lane (added Jul 2026, SOP-ADV-001): /render/advertorial takes GET
+query params (headline, body, advertiser, brand_color, is_sample, powered_by)
+and returns the card binary directly as JPEG (PNG with ?format=png) — the same
+URL serves both the workflow's binary download for Facebook and Instagram's
+image_url ingestion, like Creator Tips. Every card carries a permanent
+"Sponsored" strip; is_sample=true adds the SAMPLE CAMPAIGN ribbon and
+powered_by renders the white-label attribution line. Route lives in
+advertorial_route.py, registered via register_advertorial(app).
 """
 
 from flask import Flask, request, send_file, Response
@@ -86,6 +96,7 @@ from heritage_route import heritage            # HERITAGE (added Jul 2026)
 from naturals_route import naturals            # NAIJA NATURALS (added Jul 2026)
 from creator_cards import creator_bp           # CREATOR TIPS (added Jul 2026)
 from mamas_kitchen_cards import mk_bp          # MAMA'S KITCHEN (added Jul 2026)
+from advertorial_route import register_advertorial  # ADVERTORIAL (added Jul 2026, SOP-ADV-001)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -98,6 +109,7 @@ app.register_blueprint(heritage)               # HERITAGE (added Jul 2026)
 app.register_blueprint(naturals)               # NAIJA NATURALS (added Jul 2026)
 app.register_blueprint(creator_bp)             # CREATOR TIPS (added Jul 2026)
 app.register_blueprint(mk_bp)                  # MAMA'S KITCHEN (added Jul 2026)
+register_advertorial(app)                      # ADVERTORIAL (added Jul 2026, SOP-ADV-001)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
