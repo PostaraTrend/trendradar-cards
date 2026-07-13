@@ -20,8 +20,8 @@
 # HOW TO INSTALL:
 #   1. Paste everything below the marker into app.py (or import it as a module
 #      and call register_advertorial(app)).
-#   2. If the repo has a fonts/ folder, add its bold and regular TTF paths to
-#      the FONT_CANDIDATES lists below so the card matches the fleet look.
+#   2. Font paths point at the fleet Poppins/NotoSans TTFs in the repo root
+#      (confirmed present Jul 2026), with DejaVu as the system fallback.
 #   3. Commit and push — Render redeploys automatically.
 #   4. Test in a browser:
 #      /render/advertorial?headline=Test&body=Body+line&advertiser=TRNG+Business&brand_color=112B54&is_sample=false
@@ -34,13 +34,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 # --- Font loading: first path that exists wins. Add fleet fonts at the top. -
 FONT_CANDIDATES_BOLD = [
-    "fonts/Inter-Bold.ttf",
-    "fonts/Montserrat-Bold.ttf",
+    "Poppins-ExtraBold.ttf",
+    "Poppins-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
 ]
 FONT_CANDIDATES_REGULAR = [
-    "fonts/Inter-Regular.ttf",
-    "fonts/Montserrat-Regular.ttf",
+    "Poppins-Regular.ttf",
+    "NotoSans-Regular.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ]
 
