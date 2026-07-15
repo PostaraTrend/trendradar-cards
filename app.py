@@ -18,6 +18,8 @@ GET  /render/verdict/health -> People's Verdict lane health check (added Jul 202
 GET  /render/agent/health -> Trend Agent lane health check (added Jul 2026)
 GET/POST /render/blessing -> Daily Blessing lane card (binary PNG, or JPEG with format=jpg)
 GET  /render/blessing/health -> Daily Blessing lane health check (added Jul 2026)
+GET  /render/civic -> Your Voice 2027 civic lane card (binary PNG; added Jul 2026)
+GET  /render/civic/health -> Your Voice 2027 civic lane health check (added Jul 2026)
 POST /render/story/start -> Heritage Story Reel video job (JSON: job_id + bed; async, added Jul 2026)
 GET  /render/story/status/<job_id> -> Heritage Story Reel job status (video_url + duration when done)
 GET  /render/story/media/<job_id>.mp4 -> finished Heritage Story Reel MP4 (2-hour TTL)
@@ -135,6 +137,17 @@ Contraction gate ON (422; possessives pass); total duration clamped 15-90s
 per the Reels publishing rule. In-memory job store — inherits the
 single-worker constraint above. Route lives in story_video.py, blueprint
 story_bp.
+
+Your Voice 2027 lane (added Jul 2026): /render/civic renders the party-
+neutral civic participation card — green-white-green Nigerian flag side
+bands framing a white field, YOUR VOICE 2027 masthead, format badge chip
+(YOUR VOTE COUNTS / KNOW THE PROCESS / CIVIC FACT / FIRST-TIME VOTER;
+unknown badges fall back to a YOUR VOICE 2027 chip), autoscaling serif
+headline, neutral ballot-box motif. The only symbols are the flag colours
+and a ballot box — no party colours, no portraits, no logos. Contraction
+gate ON (422; possessives pass). GET with query params (headline, badge,
+date). Binary PNG; the workflow IG branch converts via /host. Stateless.
+Route lives in civic_card.py, blueprint civic_bp.
 """
 
 from flask import Flask, request, send_file, Response
@@ -168,6 +181,7 @@ from gist_card import gist_bp                  # GIST MACHINE (added Jul 2026)
 from agent_card import agent_bp                # TREND AGENT (added Jul 2026)
 from blessing_card import blessing_bp         # DAILY BLESSING (added Jul 2026)
 from story_video import story_bp               # HERITAGE STORY REEL (added Jul 2026)
+from civic_card import civic_bp                # YOUR VOICE 2027 (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -188,6 +202,7 @@ app.register_blueprint(gist_bp)                # GIST MACHINE (added Jul 2026)
 app.register_blueprint(agent_bp)               # TREND AGENT (added Jul 2026)
 app.register_blueprint(blessing_bp)            # DAILY BLESSING (added Jul 2026)
 app.register_blueprint(story_bp)               # HERITAGE STORY REEL (added Jul 2026)
+app.register_blueprint(civic_bp)               # YOUR VOICE 2027 (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
