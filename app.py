@@ -16,6 +16,8 @@ GET/POST /render/gist  -> Gist Machine Pidgin lane card (binary PNG, or JPEG wit
 GET/POST /render/agent -> Trend Agent lane card (binary PNG, or JPEG with format=jpg)
 GET  /render/verdict/health -> People's Verdict lane health check (added Jul 2026)
 GET  /render/agent/health -> Trend Agent lane health check (added Jul 2026)
+GET/POST /render/blessing -> Daily Blessing lane card (binary PNG, or JPEG with format=jpg)
+GET  /render/blessing/health -> Daily Blessing lane health check (added Jul 2026)
 POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG + image_url_jpg)
 GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
 POST /scam/render      -> Shine Your Eye scam-alert card (JSON: hosted image_url PNG + image_url_jpg)
@@ -107,6 +109,15 @@ headline. Accepts `category` as an alias for `badge` so the pre-repoint
 workflow payload keeps working. Contraction gate ON (422; possessives pass) —
 this is an English lane. Binary PNG default, JPEG with format=jpg. Stateless.
 Route lives in agent_card.py, blueprint agent_bp.
+
+Daily Blessing lane (added Jul 2026): /render/blessing renders the blessing
+card — dawn palette (indigo to amber, rising glow) for slot=MORNING, dusk
+palette (night violet, quiet stars) for slot=EVENING. Centered devotional
+layout: DAILY BLESSING masthead, format chip (MORNING BLESSING / DECLARATION /
+VERSE OF HOPE / EVENING GRACE / GRATITUDE / REST PRAYER), serif pull quote,
+theme line. Interfaith by design — light-based motifs only. Contraction gate
+ON (422; possessives pass). Binary PNG default, JPEG with format=jpg.
+Stateless. Route lives in blessing_card.py, blueprint blessing_bp.
 """
 
 from flask import Flask, request, send_file, Response
@@ -138,6 +149,7 @@ from postara_cards import postara_bp           # POSTARATREND AUTOPILOT (added J
 from verdict_card import verdict_bp            # PEOPLE'S VERDICT (added Jul 2026)
 from gist_card import gist_bp                  # GIST MACHINE (added Jul 2026)
 from agent_card import agent_bp                # TREND AGENT (added Jul 2026)
+from blessing_card import blessing_bp         # DAILY BLESSING (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -156,6 +168,7 @@ app.register_blueprint(postara_bp)             # POSTARATREND AUTOPILOT (added J
 app.register_blueprint(verdict_bp)             # PEOPLE'S VERDICT (added Jul 2026)
 app.register_blueprint(gist_bp)                # GIST MACHINE (added Jul 2026)
 app.register_blueprint(agent_bp)               # TREND AGENT (added Jul 2026)
+app.register_blueprint(blessing_bp)            # DAILY BLESSING (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
