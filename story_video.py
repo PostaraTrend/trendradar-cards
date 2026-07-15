@@ -34,7 +34,7 @@ from PIL import Image, ImageDraw, ImageFont
 story_bp = Blueprint("story", __name__)
 
 # ---------------------------------------------------------------- constants
-OUT_W, OUT_H = 1080, 1920            # Reel spec (>=720p, 9:16)
+OUT_W, OUT_H = 720, 1280             # Reel spec (>=720p, 9:16); 720p keeps x264 inside the 512MB instance
 FRAME_W, FRAME_H = 1242, 2208        # 15% oversize for Ken Burns headroom
 FPS = 30
 XFADE = 0.7                          # crossfade seconds between scenes
@@ -56,6 +56,31 @@ os.makedirs(JOB_DIR, exist_ok=True)
 
 JOBS = {}                            # job_id -> dict (single worker: safe)
 JOBS_LOCK = threading.Lock()
+HEARTBEAT_STALE = 240                # rendering + no heartbeat for this long = worker died
+
+
+def _status_path(job_id):
+    return os.path.join(JOB_DIR, f"{job_id}.status.json")
+
+
+def _write_status(job_id, **fields):
+    """Persist job state to /tmp so a worker restart cannot orphan the job into a 404.
+    The file's mtime doubles as the render heartbeat."""
+    try:
+        with open(_status_path(job_id), "w") as f:
+            json.dump(fields, f)
+    except OSError:
+        pass
+
+
+def _read_status(job_id):
+    try:
+        with open(_status_path(job_id)) as f:
+            data = json.load(f)
+        data["_age"] = time.time() - os.path.getmtime(_status_path(job_id))
+        return data
+    except (OSError, ValueError):
+        return None
 
 MASTHEAD = "TREND RADAR NG  •  HERITAGE STORIES"
 TAGLINE = "Stories of Naija. Told with pride."
@@ -361,7 +386,7 @@ def _run(cmd):
         raise RuntimeError("ffmpeg failed: " + (res.stderr or "")[-800:])
 
 
-def build_video(frames, bed, out_path, scene_secs, workdir):
+def build_video(frames, bed, out_path, scene_secs, workdir, progress=None):
     """Ken Burns per frame -> chained crossfades -> normalized audio bed."""
     exe = _ffmpeg_exe()
     clips = []
@@ -374,9 +399,11 @@ def build_video(frames, bed, out_path, scene_secs, workdir):
             f"zoompan=z='{zoom}':{drift}:d={n_frames}:s={OUT_W}x{OUT_H}:fps={FPS},"
             f"format=yuv420p"
         )
-        _run([exe, "-y", "-loop", "1", "-i", frame, "-vf", vf,
+        _run([exe, "-y", "-threads", "1", "-loop", "1", "-i", frame, "-vf", vf,
               "-t", f"{scene_secs}", "-c:v", "libx264", "-preset", "veryfast",
               "-crf", "20", "-an", clip])
+        if progress:
+            progress(f"scene {i + 1}/{len(frames)}")
         clips.append(clip)
 
     # chain crossfades
@@ -392,7 +419,10 @@ def build_video(frames, bed, out_path, scene_secs, workdir):
         elapsed = offset + scene_secs
     total = elapsed
     silent = os.path.join(workdir, "video_only.mp4")
-    _run([exe, "-y", *inputs, "-filter_complex", ";".join(parts) + f";[{prev}]format=yuv420p[vout]",
+    if progress:
+        progress("joining scenes")
+    _run([exe, "-y", "-threads", "1", *inputs,
+          "-filter_complex", ";".join(parts) + f";[{prev}]format=yuv420p[vout]",
           "-map", "[vout]", "-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast",
           "-crf", "20", "-r", str(FPS), silent])
 
@@ -417,12 +447,12 @@ def _gc_jobs():
         stale = [j for j, meta in JOBS.items() if now - meta["created"] > JOB_TTL]
         for j in stale:
             meta = JOBS.pop(j)
-            p = meta.get("path")
-            if p and os.path.exists(p):
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
+            for p in (meta.get("path"), _status_path(j)):
+                if p and os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
 
 
 def _render_job(job_id, payload, bed, scene_secs):
@@ -444,12 +474,17 @@ def _render_job(job_id, payload, bed, scene_secs):
         frames.append(cta_fp)
 
         out_path = os.path.join(JOB_DIR, f"{job_id}.mp4")
-        total = build_video(frames, bed, out_path, scene_secs, workdir)
+        beat = lambda step: _write_status(job_id, status="rendering",
+                                          bed=os.path.basename(bed), step=step)
+        total = build_video(frames, bed, out_path, scene_secs, workdir, progress=beat)
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", path=out_path, duration=round(total, 2))
+        _write_status(job_id, status="done", bed=os.path.basename(bed),
+                      duration=round(total, 2))
     except Exception as exc:                            # noqa: BLE001
         with JOBS_LOCK:
             JOBS[job_id].update(status="error", error=str(exc)[:800])
+        _write_status(job_id, status="error", error=str(exc)[:800])
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -466,6 +501,7 @@ def story_start():
     with JOBS_LOCK:
         JOBS[job_id] = {"status": "rendering", "created": time.time(), "path": None,
                         "bed": os.path.basename(bed)}
+    _write_status(job_id, status="rendering", bed=os.path.basename(bed))
     threading.Thread(target=_render_job, args=(job_id, payload, bed, scene_secs),
                      daemon=True).start()
     return jsonify({"status": "accepted", "job_id": job_id,
@@ -478,7 +514,23 @@ def story_status(job_id):
     with JOBS_LOCK:
         meta = JOBS.get(job_id)
     if not meta:
-        return jsonify({"status": "unknown", "error": "job not found or expired"}), 404
+        disk = _read_status(job_id)
+        mp4 = os.path.join(JOB_DIR, f"{job_id}.mp4")
+        if disk and disk.get("status") == "done" and os.path.exists(mp4):
+            meta = {"status": "done", "path": mp4,
+                    "duration": disk.get("duration"), "bed": disk.get("bed")}
+            with JOBS_LOCK:
+                JOBS[job_id] = {**meta, "created": time.time()}
+        elif disk and disk.get("status") == "error":
+            meta = {"status": "error", "error": disk.get("error")}
+        elif disk and disk.get("status") == "rendering":
+            if disk.get("_age", 0) > HEARTBEAT_STALE:
+                meta = {"status": "error",
+                        "error": "render worker restarted mid-job (likely out of memory); job lost"}
+            else:
+                meta = {"status": "rendering"}
+        else:
+            return jsonify({"status": "unknown", "error": "job not found or expired"}), 404
     body = {"status": meta["status"]}
     if meta["status"] == "done":
         body["video_url"] = f"{request.url_root.rstrip('/')}/render/story/media/{job_id}.mp4"
@@ -493,9 +545,10 @@ def story_status(job_id):
 def story_media(job_id):
     with JOBS_LOCK:
         meta = JOBS.get(job_id)
-    if not meta or meta["status"] != "done" or not os.path.exists(meta["path"] or ""):
+    path = (meta or {}).get("path") or os.path.join(JOB_DIR, f"{job_id}.mp4")
+    if not os.path.exists(path):
         return jsonify({"error": "video not ready or expired"}), 404
-    return send_file(meta["path"], mimetype="video/mp4", conditional=True)
+    return send_file(path, mimetype="video/mp4", conditional=True)
 
 
 @story_bp.route("/render/story/health", methods=["GET"])
