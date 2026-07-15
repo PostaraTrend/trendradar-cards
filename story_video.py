@@ -208,7 +208,7 @@ def validate_payload(p):
     if not 3 <= secs <= 12:
         errors.append("scene_seconds must be between 3 and 12")
     n_clips = (len(scenes) if isinstance(scenes, list) else 0) + 2  # title + cta
-    total = n_clips * secs - (n_clips - 1) * XFADE
+    total = n_clips * secs
     if total < MIN_TOTAL or total > MAX_TOTAL:
         errors.append(
             f"total duration {total:.1f}s outside publishing rule {MIN_TOTAL}-{MAX_TOTAL}s "
@@ -325,7 +325,7 @@ def render_title_frame(path, title, kicker):
         y += lh
     _dotted_divider(d, y + 60)
     _footer(d, TAGLINE)
-    img.save(path, "PNG")
+    img.resize((828, 1472), Image.LANCZOS).save(path, "PNG")
 
 
 def render_scene_frame(path, text, idx, total, label=None):
@@ -347,7 +347,7 @@ def render_scene_frame(path, text, idx, total, label=None):
         fill = GOLD if i < idx else (70, 74, 82)
         d.ellipse([x + i * gap - r, dy - r, x + i * gap + r, dy + r], fill=fill)
     _footer(d, TAGLINE)
-    img.save(path, "PNG")
+    img.resize((828, 1472), Image.LANCZOS).save(path, "PNG")
 
 
 def render_cta_frame(path, title, cta):
@@ -365,7 +365,7 @@ def render_cta_frame(path, title, cta):
     tag = "#TrendRadarNG"
     d.text(((FRAME_W - d.textlength(tag, font=fh)) / 2, y + 90), tag, font=fh, fill=GOLD)
     _footer(d, TAGLINE)
-    img.save(path, "PNG")
+    img.resize((828, 1472), Image.LANCZOS).save(path, "PNG")
 
 
 # ---------------------------------------------------------------- ffmpeg
@@ -391,40 +391,36 @@ def build_video(frames, bed, out_path, scene_secs, workdir, progress=None):
     exe = _ffmpeg_exe()
     clips = []
     n_frames = int(scene_secs * FPS)
+    fade = 0.35                                        # fade-through-black page turn
     for i, frame in enumerate(frames):
         clip = os.path.join(workdir, f"clip_{i:02d}.mp4")
         zoom = f"min(zoom+{0.10 / n_frames:.6f},1.10)"
         drift = "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)+(on/{n})*40'".format(n=n_frames)
         vf = (
             f"zoompan=z='{zoom}':{drift}:d={n_frames}:s={OUT_W}x{OUT_H}:fps={FPS},"
+            f"fade=t=in:st=0:d={fade},"
+            f"fade=t=out:st={scene_secs - fade:.3f}:d={fade},"
             f"format=yuv420p"
         )
         _run([exe, "-y", "-threads", "1", "-loop", "1", "-i", frame, "-vf", vf,
-              "-t", f"{scene_secs}", "-c:v", "libx264", "-preset", "veryfast",
-              "-crf", "20", "-an", clip])
+              "-t", f"{scene_secs}", "-c:v", "libx264", "-profile:v", "high",
+              "-preset", "veryfast", "-crf", "20", "-an", clip])
         if progress:
             progress(f"scene {i + 1}/{len(frames)}")
         clips.append(clip)
 
-    # chain crossfades
-    inputs = []
-    for c in clips:
-        inputs += ["-i", c]
-    parts, prev, elapsed = [], "0:v", scene_secs
-    for i in range(1, len(clips)):
-        label = f"v{i}"
-        offset = elapsed - XFADE
-        parts.append(f"[{prev}][{i}:v]xfade=transition=fade:duration={XFADE}:offset={offset:.3f}[{label}]")
-        prev = label
-        elapsed = offset + scene_secs
-    total = elapsed
+    # join with the concat demuxer + stream copy: one clip in memory at a time,
+    # no filtergraph, no re-encode — this was the OOM step in the xfade design.
+    total = len(clips) * scene_secs
+    listfile = os.path.join(workdir, "concat.txt")
+    with open(listfile, "w") as f:
+        for c in clips:
+            f.write(f"file '{c}'\n")
     silent = os.path.join(workdir, "video_only.mp4")
     if progress:
         progress("joining scenes")
-    _run([exe, "-y", "-threads", "1", *inputs,
-          "-filter_complex", ";".join(parts) + f";[{prev}]format=yuv420p[vout]",
-          "-map", "[vout]", "-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast",
-          "-crf", "20", "-r", str(FPS), silent])
+    _run([exe, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
+          "-c", "copy", silent])
 
     # audio: loop if short, loudness normalize to -14 LUFS, fade in/out, single AAC encode
     af = (
