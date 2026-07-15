@@ -9,6 +9,8 @@ warm, playful, unmistakably NOT the navy news card. 4:5 photo post.
 Expected query params (GET) or JSON body (POST):
   headline   (required)  Pidgin headline, max ~120 chars recommended
   badge      (optional)  format chip: GIST | TORI | AMEBO CORNER | MAKE WE TALK (default GIST)
+                         Better Life PM also renders here: SMALL JOY | BANTER POLL |
+                         PROVERB REMIX | FEEL GOOD
   date       (optional)  e.g. "14 Jul 2026"
   handle     (optional)  default fb.com/TrendRadarNG
 
@@ -46,7 +48,8 @@ FONT_CANDIDATES = {
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
 }
 
-BADGES = {"GIST", "TORI", "AMEBO CORNER", "MAKE WE TALK"}
+BADGES = {"GIST", "TORI", "AMEBO CORNER", "MAKE WE TALK",
+          "SMALL JOY", "BANTER POLL", "PROVERB REMIX", "FEEL GOOD"}  # Better Life PM
 
 
 def _font(kind, size):

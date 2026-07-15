@@ -58,7 +58,8 @@ FONT_CANDIDATES = {
               "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"],
 }
 
-BADGES = {"EXPLAINER", "HOT TAKE", "LISTICLE", "DEBATE"}
+BADGES = {"EXPLAINER", "HOT TAKE", "LISTICLE", "DEBATE",
+          "JOB ALERT", "FREE TRAINING", "GRANT ALERT", "CAREER TIP"}  # Better Life AM
 
 # House rule: no contractions in English lanes. Possessives pass.
 _APO = "['\u2019`]"
