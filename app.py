@@ -13,7 +13,9 @@ GET  /render/creator-card -> Creator Tips lane card (binary JPEG; IG-compatible 
 GET  /render/advertorial -> Advertorial lane card, SOP-ADV-001 (binary JPEG, or PNG with ?format=png)
 GET/POST /render/verdict -> People's Verdict lane card (binary PNG, or JPEG with format=jpg)
 GET/POST /render/gist  -> Gist Machine Pidgin lane card (binary PNG, or JPEG with format=jpg)
+GET/POST /render/agent -> Trend Agent lane card (binary PNG, or JPEG with format=jpg)
 GET  /render/verdict/health -> People's Verdict lane health check (added Jul 2026)
+GET  /render/agent/health -> Trend Agent lane health check (added Jul 2026)
 POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG + image_url_jpg)
 GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
 POST /scam/render      -> Shine Your Eye scam-alert card (JSON: hosted image_url PNG + image_url_jpg)
@@ -97,6 +99,14 @@ the card binary directly (PNG default, JPEG with format=jpg). Navy/gold card
 with a SHARE OF VOICE bar chart of the community camps. Same contraction gate
 as the other lanes (422; possessives pass). Stateless — no hosting, no worker
 memory. Route lives in verdict_card.py, blueprint verdict_bp.
+
+Trend Agent lane (added Jul 2026): /render/agent renders the agent's own
+"Radar" card — near-black ink with the house-gold radar sweep and contact
+blip, format badge chip (EXPLAINER / HOT TAKE / LISTICLE / DEBATE), serif
+headline. Accepts `category` as an alias for `badge` so the pre-repoint
+workflow payload keeps working. Contraction gate ON (422; possessives pass) —
+this is an English lane. Binary PNG default, JPEG with format=jpg. Stateless.
+Route lives in agent_card.py, blueprint agent_bp.
 """
 
 from flask import Flask, request, send_file, Response
@@ -127,6 +137,7 @@ from daily_brief_cards import brief_bp         # NAIJA DAILY BRIEF (added Jul 20
 from postara_cards import postara_bp           # POSTARATREND AUTOPILOT (added Jul 2026)
 from verdict_card import verdict_bp            # PEOPLE'S VERDICT (added Jul 2026)
 from gist_card import gist_bp                  # GIST MACHINE (added Jul 2026)
+from agent_card import agent_bp                # TREND AGENT (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -144,6 +155,7 @@ app.register_blueprint(brief_bp)               # NAIJA DAILY BRIEF (added Jul 20
 app.register_blueprint(postara_bp)             # POSTARATREND AUTOPILOT (added Jul 2026)
 app.register_blueprint(verdict_bp)             # PEOPLE'S VERDICT (added Jul 2026)
 app.register_blueprint(gist_bp)                # GIST MACHINE (added Jul 2026)
+app.register_blueprint(agent_bp)               # TREND AGENT (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
