@@ -12,6 +12,7 @@ POST /render/peoples-voice -> People's Voice lane card (binary PNG, or JPEG with
 GET  /render/creator-card -> Creator Tips lane card (binary JPEG; IG-compatible directly)
 GET  /render/advertorial -> Advertorial lane card, SOP-ADV-001 (binary JPEG, or PNG with ?format=png)
 GET/POST /render/verdict -> People's Verdict lane card (binary PNG, or JPEG with format=jpg)
+GET/POST /render/gist  -> Gist Machine Pidgin lane card (binary PNG, or JPEG with format=jpg)
 GET  /render/verdict/health -> People's Verdict lane health check (added Jul 2026)
 POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG + image_url_jpg)
 GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
@@ -125,6 +126,7 @@ from advertorial_route import register_advertorial  # ADVERTORIAL (added Jul 202
 from daily_brief_cards import brief_bp         # NAIJA DAILY BRIEF (added Jul 2026)
 from postara_cards import postara_bp           # POSTARATREND AUTOPILOT (added Jul 2026)
 from verdict_card import verdict_bp            # PEOPLE'S VERDICT (added Jul 2026)
+from gist_card import gist_bp                  # GIST MACHINE (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -141,6 +143,7 @@ register_advertorial(app)                      # ADVERTORIAL (added Jul 2026, SO
 app.register_blueprint(brief_bp)               # NAIJA DAILY BRIEF (added Jul 2026)
 app.register_blueprint(postara_bp)             # POSTARATREND AUTOPILOT (added Jul 2026)
 app.register_blueprint(verdict_bp)             # PEOPLE'S VERDICT (added Jul 2026)
+app.register_blueprint(gist_bp)                # GIST MACHINE (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
