@@ -62,22 +62,41 @@ TAGLINE = "Stories of Naija. Told with pride."
 
 
 # ---------------------------------------------------------------- fonts
+def _root_font(serif, bold):
+    """Flat-repo support: find a matching .ttf at the repo root (fonts live
+    flat next to app.py in trendradar-cards — Prospero/Playfair serif,
+    NotoSans sans)."""
+    try:
+        files = [f for f in os.listdir(BASE_DIR) if f.lower().endswith((".ttf", ".otf"))]
+    except OSError:
+        return None
+    hints = ("playfair", "prospero", "serif") if serif else ("notosans", "noto", "inter")
+    pool = [f for f in files if any(h in f.lower().replace(" ", "") for h in hints)]
+    if not serif:
+        pool = [f for f in pool if "serif" not in f.lower()]
+    if not pool:
+        return None
+    want = [f for f in pool if ("bold" in f.lower()) == bold] or pool
+    # prefer plain Bold/Regular over Italic/Condensed variants
+    want.sort(key=lambda f: ("ital" in f.lower(), "cond" in f.lower(), len(f)))
+    return os.path.join(BASE_DIR, want[0])
+
+
 def _font(size, serif=True, bold=False):
     """House-style font loader with graceful fallback (mirrors card modules)."""
     local = os.path.join(BASE_DIR, "fonts")
     candidates = []
+    root = _root_font(serif, bold)
     if serif:
-        candidates += [
-            os.path.join(local, "PlayfairDisplay-Bold.ttf" if bold else "PlayfairDisplay-Regular.ttf"),
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf" if bold
-            else "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-        ]
+        candidates += [os.path.join(local, "PlayfairDisplay-Bold.ttf" if bold else "PlayfairDisplay-Regular.ttf")]
+        if root: candidates.append(root)
+        candidates += ["/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"]
     else:
-        candidates += [
-            os.path.join(local, "Inter-Bold.ttf" if bold else "Inter-Regular.ttf"),
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
-            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ]
+        candidates += [os.path.join(local, "Inter-Bold.ttf" if bold else "Inter-Regular.ttf")]
+        if root: candidates.append(root)
+        candidates += ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
     for path in candidates:
         if os.path.exists(path):
             try:
@@ -494,7 +513,7 @@ def story_health():
         problems.append("no audio beds in audio/ (expected e.g. audio/bed_folktale.mp3)")
     return jsonify({
         "status": "ok" if not problems else "degraded",
-        "ffmpeg": "bundled (imageio-ffmpeg)" if not problems or beds else "check requirements",
+        "ffmpeg": "unavailable — check requirements.txt (imageio-ffmpeg)" if any("ffmpeg" in p for p in problems) else "bundled (imageio-ffmpeg)",
         "audio_beds": beds,
         "problems": problems,
     }), 200 if not problems else 503
