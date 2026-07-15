@@ -18,6 +18,10 @@ GET  /render/verdict/health -> People's Verdict lane health check (added Jul 202
 GET  /render/agent/health -> Trend Agent lane health check (added Jul 2026)
 GET/POST /render/blessing -> Daily Blessing lane card (binary PNG, or JPEG with format=jpg)
 GET  /render/blessing/health -> Daily Blessing lane health check (added Jul 2026)
+POST /render/story/start -> Heritage Story Reel video job (JSON: job_id + bed; async, added Jul 2026)
+GET  /render/story/status/<job_id> -> Heritage Story Reel job status (video_url + duration when done)
+GET  /render/story/media/<job_id>.mp4 -> finished Heritage Story Reel MP4 (2-hour TTL)
+GET  /render/story/health -> Heritage Story Reel lane health check (lists audio beds)
 POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG + image_url_jpg)
 GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
 POST /scam/render      -> Shine Your Eye scam-alert card (JSON: hosted image_url PNG + image_url_jpg)
@@ -118,6 +122,19 @@ VERSE OF HOPE / EVENING GRACE / GRATITUDE / REST PRAYER), serif pull quote,
 theme line. Interfaith by design — light-based motifs only. Contraction gate
 ON (422; possessives pass). Binary PNG default, JPEG with format=jpg.
 Stateless. Route lives in blessing_card.py, blueprint blessing_bp.
+
+Heritage Story Reel lane (added Jul 2026): the first VIDEO lane. POST
+/render/story/start accepts JSON (title, kicker, scenes[4-6], cta, mood,
+scene_seconds) and returns a job_id immediately; a background thread renders
+house-style frames (Pillow) into a 1080x1920 H.264/AAC Reel via the bundled
+imageio-ffmpeg binary (Ken Burns + crossfades), muxing an audio bed from
+audio/bed_<mood>*.mp3 (loudness -14 LUFS, fades; multi-bed rotation is
+deterministic on the story title). Poll /render/story/status/<job_id> until
+done, then Meta pulls /render/story/media/<job_id>.mp4 (2-hour TTL, /tmp).
+Contraction gate ON (422; possessives pass); total duration clamped 15-90s
+per the Reels publishing rule. In-memory job store — inherits the
+single-worker constraint above. Route lives in story_video.py, blueprint
+story_bp.
 """
 
 from flask import Flask, request, send_file, Response
@@ -150,6 +167,7 @@ from verdict_card import verdict_bp            # PEOPLE'S VERDICT (added Jul 202
 from gist_card import gist_bp                  # GIST MACHINE (added Jul 2026)
 from agent_card import agent_bp                # TREND AGENT (added Jul 2026)
 from blessing_card import blessing_bp         # DAILY BLESSING (added Jul 2026)
+from story_video import story_bp               # HERITAGE STORY REEL (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -169,6 +187,7 @@ app.register_blueprint(verdict_bp)             # PEOPLE'S VERDICT (added Jul 202
 app.register_blueprint(gist_bp)                # GIST MACHINE (added Jul 2026)
 app.register_blueprint(agent_bp)               # TREND AGENT (added Jul 2026)
 app.register_blueprint(blessing_bp)            # DAILY BLESSING (added Jul 2026)
+app.register_blueprint(story_bp)               # HERITAGE STORY REEL (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
