@@ -220,11 +220,12 @@ def build_scenes(p):
 def tts_provider(): return os.environ.get("STORY_TTS_PROVIDER", "off").lower()
 
 def tts_scene(text, out_mp3):
+    """Returns (ok, error_detail)."""
     prov = tts_provider()
     try:
         if prov == "elevenlabs":
             import urllib.request
-            vid = os.environ.get("STORY_VOICE_ID", "")
+            vid = os.environ.get("STORY_VOICE_ID", "").split(",")[0].strip()
             key = os.environ.get("ELEVENLABS_API_KEY", "")
             if not (vid and key): return False
             req = urllib.request.Request(
@@ -235,14 +236,14 @@ def tts_scene(text, out_mp3):
                          "Accept": "audio/mpeg"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 open(out_mp3, "wb").write(r.read())
-            return os.path.getsize(out_mp3) > 1000
+            return (os.path.getsize(out_mp3) > 1000, "")
         if prov == "google":
             import urllib.request, base64
             key = os.environ.get("GOOGLE_TTS_API_KEY", "")
             if not key: return False
             body = {"input": {"text": text},
                     "voice": {"languageCode": "en-NG",
-                              "name": os.environ.get("STORY_VOICE_ID", "en-NG-Standard-A")},
+                              "name": (os.environ.get("STORY_VOICE_ID", "en-NG-Standard-A").split(",")[0].strip() or "en-NG-Standard-A")},
                     "audioConfig": {"audioEncoding": "MP3",
                                     "speakingRate": float(os.environ.get("STORY_VOICE_RATE", "0.97"))}}
             req = urllib.request.Request(
@@ -251,10 +252,13 @@ def tts_scene(text, out_mp3):
             with urllib.request.urlopen(req, timeout=60) as r:
                 audio = json.loads(r.read())["audioContent"]
             open(out_mp3, "wb").write(base64.b64decode(audio))
-            return os.path.getsize(out_mp3) > 1000
-    except Exception:
-        return False
-    return False
+            return (os.path.getsize(out_mp3) > 1000, "")
+    except Exception as e:
+        body = ""
+        try: body = e.read().decode()[:200]
+        except Exception: pass
+        return (False, f"{type(e).__name__}: {str(e)[:150]} {body}".strip())
+    return (False, f"provider {prov} not configured (missing key or voice id)")
 
 def media_dur(path):
     try:
@@ -306,10 +310,15 @@ def do_render(jid, p):
             for key, _items, default_text in scenes:
                 text = str(narr_in.get(key) or default_text)
                 mp3 = os.path.join(work, f"{key}.mp3")
-                if tts_scene(text, mp3) and media_dur(mp3) > 0.3:
+                ok, err = tts_scene(text, mp3)
+                if ok and media_dur(mp3) > 0.3:
                     narr_files[key] = mp3; narrated = True
                 else:
-                    narr_files = {}; narrated = False; break   # all-or-nothing, clean fallback
+                    # STRICT: narration is configured, so a voice failure fails the job
+                    # loudly instead of silently publishing a voiceless reel.
+                    _jset(jid, status="error",
+                          error=f"narration failed on {key}: {err or 'empty audio'}")
+                    return
 
         # scene durations
         durs = {}
@@ -442,8 +451,18 @@ def pvreel_media(jid):
 def pvreel_health():
     beds = [os.path.basename(b) for b in list_beds()]
     ok = bool(beds) and fonts_ok()
-    return jsonify({"status": "ok" if ok else "degraded",
-                    "beds": beds, "poppins": fonts_ok(),
-                    "narration": {"provider": tts_provider(),
-                                  "voice": os.environ.get("STORY_VOICE_ID", "")},
-                    "ffmpeg": os.path.basename(ffmpeg_bin())})
+    voice_raw = os.environ.get("STORY_VOICE_ID", "")
+    out = {"status": "ok" if ok else "degraded",
+           "beds": beds, "poppins": fonts_ok(),
+           "narration": {"provider": tts_provider(),
+                         "voice_in_use": voice_raw.split(",")[0].strip(),
+                         "extra_ids_ignored": max(0, len([v for v in voice_raw.split(",") if v.strip()]) - 1)},
+           "ffmpeg": os.path.basename(ffmpeg_bin())}
+    if request.args.get("probe") and tts_provider() in ("elevenlabs", "google"):
+        import tempfile
+        tmp = os.path.join(tempfile.gettempdir(), "pvreel_probe.mp3")
+        pok, perr = tts_scene("Testing the People's Voice narrator.", tmp)
+        out["tts_probe"] = {"ok": bool(pok), "error": perr or None,
+                            "audio_seconds": round(media_dur(tmp), 2) if pok else 0}
+        if not pok: out["status"] = "degraded"
+    return jsonify(out)
