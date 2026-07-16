@@ -24,6 +24,10 @@ POST /render/story/start -> Heritage Story Reel video job (JSON: job_id + bed; a
 GET  /render/story/status/<job_id> -> Heritage Story Reel job status (video_url + duration when done)
 GET  /render/story/media/<job_id>.mp4 -> finished Heritage Story Reel MP4 (2-hour TTL)
 GET  /render/story/health -> Heritage Story Reel lane health check (lists audio beds)
+POST /render/pvreel/start -> People's Voice Edition Reel video job (JSON: job_id; async, added Jul 2026)
+GET  /render/pvreel/status/<job_id> -> PV Edition Reel job status (duration + narrated flag when done)
+GET  /render/pvreel/media/<job_id>.mp4 -> finished PV Edition Reel MP4
+GET  /render/pvreel/health -> PV Edition Reel lane health check (beds, fonts, narration)
 POST /col/render       -> Cost of Living lane card (JSON: hosted image_url PNG + image_url_jpg)
 GET  /col/image/<id>.png / .jpg -> serves a rendered COL card (1-hour TTL)
 POST /scam/render      -> Shine Your Eye scam-alert card (JSON: hosted image_url PNG + image_url_jpg)
@@ -148,6 +152,19 @@ and a ballot box — no party colours, no portraits, no logos. Contraction
 gate ON (422; possessives pass). GET with query params (headline, badge,
 date). Binary PNG; the workflow IG branch converts via /host. Stateless.
 Route lives in civic_card.py, blueprint civic_bp.
+
+People's Voice Edition Reel lane (added Jul 2026): the second VIDEO lane.
+POST /render/pvreel/start accepts the full thirteen-scene edition package
+(hook, both sides, third way, audience, question, floor window, call to
+action, optional per-scene narration) and returns a job_id immediately; a
+background thread renders the PV navy-starfield scenes (Poppins, orbit mark)
+into a 720x1280 H.264/AAC video with the loopable bed from
+audio/bed_pv*.mp3, ducked under narration when the shared STORY_TTS env
+vars are configured (graceful bed-only fallback otherwise). Reading-speed
+pacing without narration; duration follows the voice with narration on;
+180s hard cap. Disk-backed job store with heartbeat (poll stays honest
+across worker restarts). Contraction gate ON (422; possessives pass).
+Route lives in pv_reel_video.py, blueprint pv_reel_bp.
 """
 
 from flask import Flask, request, send_file, Response
@@ -182,6 +199,7 @@ from agent_card import agent_bp                # TREND AGENT (added Jul 2026)
 from blessing_card import blessing_bp         # DAILY BLESSING (added Jul 2026)
 from story_video import story_bp               # HERITAGE STORY REEL (added Jul 2026)
 from civic_card import civic_bp                # YOUR VOICE 2027 (added Jul 2026)
+from pv_reel_video import pv_reel_bp           # PV EDITION REEL (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -203,6 +221,7 @@ app.register_blueprint(agent_bp)               # TREND AGENT (added Jul 2026)
 app.register_blueprint(blessing_bp)            # DAILY BLESSING (added Jul 2026)
 app.register_blueprint(story_bp)               # HERITAGE STORY REEL (added Jul 2026)
 app.register_blueprint(civic_bp)               # YOUR VOICE 2027 (added Jul 2026)
+app.register_blueprint(pv_reel_bp)             # PV EDITION REEL (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
