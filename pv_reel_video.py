@@ -1,9 +1,10 @@
-"""pv_reel_video.py — The People's Voice edition reel renderer (v1.0).
+"""pv_reel_video.py — The People's Voice edition reel renderer (v1.1).
 
 Async narrated promo-reel generator for the PV lane, built on the proven
 story_video v2.0 architecture: disk-backed job store with heartbeat,
 OOM-safe per-clip encode + stream-copy concat (no multi-input xfade),
-pluggable TTS narration with graceful bed-only fallback, ducked audio bed,
+pluggable TTS narration, STRICT (a configured voice that fails errors the job
+rather than silently publishing a voiceless reel), ducked audio bed,
 single loudnorm pass to -14 LUFS, true-silence tail.
 
 Branding: PV navy starfield, orbit mark, Poppins type, gold/white palette.
@@ -216,7 +217,7 @@ def build_scenes(p):
               "The People's Voice. Your Voice. Your News. Your Nigeria. Follow Trend Radar N G."))
     return s
 
-# ---------------- TTS (shared env with story lane; graceful fallback) -------
+# ---------------- TTS (shared env with story lane; strict, see do_render) ---
 def tts_provider(): return os.environ.get("STORY_TTS_PROVIDER", "off").lower()
 
 def tts_scene(text, out_mp3):
@@ -227,7 +228,7 @@ def tts_scene(text, out_mp3):
             import urllib.request
             vid = os.environ.get("STORY_VOICE_ID", "").split(",")[0].strip()
             key = os.environ.get("ELEVENLABS_API_KEY", "")
-            if not (vid and key): return False
+            if not (vid and key): return (False, "STORY_VOICE_ID or ELEVENLABS_API_KEY is not set on this service")
             req = urllib.request.Request(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{vid}",
                 data=json.dumps({"text": text, "model_id": "eleven_multilingual_v2",
@@ -240,7 +241,7 @@ def tts_scene(text, out_mp3):
         if prov == "google":
             import urllib.request, base64
             key = os.environ.get("GOOGLE_TTS_API_KEY", "")
-            if not key: return False
+            if not key: return (False, "GOOGLE_TTS_API_KEY is not set on this service")
             body = {"input": {"text": text},
                     "voice": {"languageCode": "en-NG",
                               "name": (os.environ.get("STORY_VOICE_ID", "en-NG-Standard-A").split(",")[0].strip() or "en-NG-Standard-A")},
