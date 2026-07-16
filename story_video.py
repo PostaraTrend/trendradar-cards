@@ -201,7 +201,7 @@ def _tts_ready(cfg=None):
 
 
 def _synth_narration(text, out_path, cfg):
-    """Write narration audio for one unit of text. Returns True on success."""
+    """Write narration audio for one unit of text. Returns (ok, reason)."""
     try:
         if cfg["provider"] == "elevenlabs":
             import requests
@@ -211,11 +211,18 @@ def _synth_narration(text, out_path, cfg):
                 headers={"xi-api-key": cfg["el_key"], "content-type": "application/json"},
                 json={"text": text, "model_id": "eleven_multilingual_v2"},
                 timeout=60)
-            if r.status_code != 200 or len(r.content) < 500:
-                return False
+            if r.status_code != 200:
+                try:
+                    detail = r.json().get("detail", {})
+                    msg = detail.get("message") if isinstance(detail, dict) else str(detail)
+                except Exception:
+                    msg = (r.text or "")[:200]
+                return False, f"elevenlabs http {r.status_code}: {msg or '(no detail)'}"
+            if len(r.content) < 500:
+                return False, f"elevenlabs returned {len(r.content)} bytes (too small to be audio)"
             with open(out_path, "wb") as f:
                 f.write(r.content)
-            return True
+            return True, None
         if cfg["provider"] == "google":
             import base64
             import requests
@@ -229,23 +236,23 @@ def _synth_narration(text, out_path, cfg):
                                       "speakingRate": float(os.environ.get("STORY_VOICE_RATE", "0.92"))}},
                 timeout=60)
             if r.status_code != 200:
-                return False
+                return False, f"google tts http {r.status_code}: {(r.text or '')[:200]}"
             audio = r.json().get("audioContent")
             if not audio:
-                return False
+                return False, "google tts returned no audioContent"
             with open(out_path, "wb") as f:
                 f.write(base64.b64decode(audio))
-            return True
+            return True, None
         if cfg["provider"] == "stub":                     # QA only: speech-paced babble
             dur = max(1.2, len(text) * 0.062)
             _run([_ffmpeg_exe(), "-y", "-f", "lavfi",
                   "-i", f"sine=frequency=220:duration={dur:.2f}",
                   "-af", "tremolo=f=5:d=0.8,lowpass=f=1200,volume=0.6",
                   "-c:a", "libmp3lame", "-q:a", "5", out_path])
-            return True
-    except Exception:                                     # noqa: BLE001
-        return False
-    return False
+            return True, None
+    except Exception as exc:                               # noqa: BLE001
+        return False, f"{type(exc).__name__}: {str(exc)[:200]}"
+    return False, "unknown provider"
 
 
 def _audio_duration(path):
@@ -621,20 +628,22 @@ def _render_job(job_id, payload, bed, scene_secs):
         narr_files = None
         cfg = _tts_cfg(title)
         want_narration = payload.get("narration", _tts_ready(cfg))
+        narr_error = None
         if want_narration and _tts_ready(cfg):
             units = [f"{title}." if not title.endswith((".", "!", "?")) else title]
             units += [s["text"].strip() for s in scenes]
             units += [cta]
-            nfiles, nsecs, ok = [], [], True
+            nfiles, nsecs, ok, narr_error = [], [], True, None
             for i, text in enumerate(units):
                 beat(f"narration {i + 1}/{len(units)}")
                 nf = os.path.join(workdir, f"tts_{i:02d}.mp3")
-                if not _synth_narration(text, nf, cfg):
-                    ok = False
+                synth_ok, reason = _synth_narration(text, nf, cfg)
+                if not synth_ok:
+                    ok, narr_error = False, f"unit {i + 1}/{len(units)}: {reason}"
                     break
                 d = _audio_duration(nf)
                 if not d:
-                    ok = False
+                    ok, narr_error = False, f"unit {i + 1}/{len(units)}: could not read synthesized duration"
                     break
                 nfiles.append(nf)
                 nsecs.append(min(max(d + NARR_PAD, NARR_MIN), NARR_MAX))
@@ -652,12 +661,15 @@ def _render_job(job_id, payload, bed, scene_secs):
 
         total = build_video(frames, bed, out_path, scene_secs, workdir, progress=beat,
                             clip_secs=clip_secs, narr_files=narr_files)
+        narr_err_final = narr_error if (want_narration and _tts_ready(cfg) and not narr_files) else None
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", path=out_path, duration=round(total, 2),
-                                narrated=bool(narr_files), voice=(cfg["voice"] if narr_files else None))
+                                narrated=bool(narr_files), voice=(cfg["voice"] if narr_files else None),
+                                narration_error=narr_err_final)
         _write_status(job_id, status="done", bed=os.path.basename(bed),
                       duration=round(total, 2), narrated=bool(narr_files),
-                      voice=(cfg["voice"] if narr_files else None))
+                      voice=(cfg["voice"] if narr_files else None),
+                      narration_error=narr_err_final)
     except Exception as exc:                            # noqa: BLE001
         with JOBS_LOCK:
             JOBS[job_id].update(status="error", error=str(exc)[:800])
@@ -715,6 +727,8 @@ def story_status(job_id):
         body["bed"] = meta.get("bed")
         body["narrated"] = meta.get("narrated", False)
         body["voice"] = meta.get("voice")
+        if meta.get("narration_error"):
+            body["narration_error"] = meta["narration_error"]
     if meta["status"] == "error":
         body["error"] = meta.get("error")
     return jsonify(body)
