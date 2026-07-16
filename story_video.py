@@ -256,14 +256,20 @@ def _synth_narration(text, out_path, cfg):
 
 
 def _audio_duration(path):
-    """Duration in seconds via ffmpeg stderr parse (no ffprobe in the bundle)."""
+    """Duration in seconds via ffmpeg stderr parse (no ffprobe in the bundle).
+    Tries the stream-info 'Duration: H:MM:SS.ss' line first (present even for
+    very short clips), then the progress 'time=' marker as a fallback."""
     res = subprocess.run([_ffmpeg_exe(), "-i", path, "-f", "null", "-"],
                          capture_output=True, text=True)
-    m = re.search(r"time=(\d+):(\d+):(\d+\.?\d*)", res.stderr or "")
+    err = res.stderr or ""
+    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", err)
+    if not m:
+        m = re.search(r"time=(\d+):(\d+):(\d+\.?\d*)", err)
     if not m:
         return None
     h, mnt, s = m.groups()
-    return int(h) * 3600 + int(mnt) * 60 + float(s)
+    dur = int(h) * 3600 + int(mnt) * 60 + float(s)
+    return dur if dur > 0 else None
 
 
 # ---------------------------------------------------------------- gates
@@ -643,8 +649,10 @@ def _render_job(job_id, payload, bed, scene_secs):
                     break
                 d = _audio_duration(nf)
                 if not d:
-                    ok, narr_error = False, f"unit {i + 1}/{len(units)}: could not read synthesized duration"
-                    break
+                    # graceful degrade: the TTS call already succeeded and nf holds real
+                    # narration audio — only our duration MEASUREMENT failed, so estimate
+                    # from text length rather than discarding the whole story's narration
+                    d = max(1.2, len(text) * 0.075)
                 nfiles.append(nf)
                 nsecs.append(min(max(d + NARR_PAD, NARR_MIN), NARR_MAX))
             if ok:
