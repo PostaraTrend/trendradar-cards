@@ -156,6 +156,109 @@ def _pick_bed(mood, title, explicit=None):
     return os.path.join(AUDIO_DIR, beds[idx]), beds
 
 
+# ---------------------------------------------------------------- narration (TTS)
+# Phase 2a: a voice reads the story. Controlled by Render env vars — no workflow
+# change needed. If TTS fails for any reason, the render falls back to the
+# music-bed-only Reel so the lane never breaks on a voice-API hiccup.
+#   STORY_TTS_PROVIDER = off | elevenlabs | google   (default off)
+#   ELEVENLABS_API_KEY, STORY_VOICE_ID               (ElevenLabs)
+#   GOOGLE_TTS_API_KEY, STORY_VOICE_ID e.g. en-NG-Standard-A (Google)
+NARR_PAD = 1.4                       # breathing room after each scene's narration
+NARR_MIN, NARR_MAX = 4.0, 14.0       # per-scene duration bounds when narrated
+BED_DUCK = 0.22                      # bed volume under narration
+
+
+def _tts_cfg(title=""):
+    """STORY_VOICE_ID may be a single id or a comma-separated list. A list
+    rotates deterministically on the story title (same pattern as bed
+    rotation): a re-render of the same story keeps its voice; different
+    stories vary across the set."""
+    raw_voices = [v.strip() for v in (os.environ.get("STORY_VOICE_ID") or "").split(",") if v.strip()]
+    if len(raw_voices) > 1:
+        import hashlib
+        idx = int(hashlib.md5((title or "").encode("utf-8")).hexdigest(), 16) % len(raw_voices)
+        voice = raw_voices[idx]
+    else:
+        voice = raw_voices[0] if raw_voices else ""
+    return {
+        "provider": (os.environ.get("STORY_TTS_PROVIDER") or "off").strip().lower(),
+        "voice": voice,
+        "voice_pool": raw_voices,
+        "el_key": (os.environ.get("ELEVENLABS_API_KEY") or "").strip(),
+        "g_key": (os.environ.get("GOOGLE_TTS_API_KEY") or "").strip(),
+    }
+
+
+def _tts_ready(cfg=None):
+    cfg = cfg or _tts_cfg()
+    if cfg["provider"] == "elevenlabs":
+        return bool(cfg["el_key"] and cfg["voice"])
+    if cfg["provider"] == "google":
+        return bool(cfg["g_key"])
+    if cfg["provider"] == "stub":
+        return True
+    return False
+
+
+def _synth_narration(text, out_path, cfg):
+    """Write narration audio for one unit of text. Returns True on success."""
+    try:
+        if cfg["provider"] == "elevenlabs":
+            import requests
+            r = requests.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{cfg['voice']}",
+                params={"output_format": "mp3_44100_128"},
+                headers={"xi-api-key": cfg["el_key"], "content-type": "application/json"},
+                json={"text": text, "model_id": "eleven_multilingual_v2"},
+                timeout=60)
+            if r.status_code != 200 or len(r.content) < 500:
+                return False
+            with open(out_path, "wb") as f:
+                f.write(r.content)
+            return True
+        if cfg["provider"] == "google":
+            import base64
+            import requests
+            voice = cfg["voice"] or "en-NG-Standard-A"
+            r = requests.post(
+                "https://texttospeech.googleapis.com/v1/text:synthesize",
+                params={"key": cfg["g_key"]},
+                json={"input": {"text": text},
+                      "voice": {"languageCode": "en-NG", "name": voice},
+                      "audioConfig": {"audioEncoding": "MP3",
+                                      "speakingRate": float(os.environ.get("STORY_VOICE_RATE", "0.92"))}},
+                timeout=60)
+            if r.status_code != 200:
+                return False
+            audio = r.json().get("audioContent")
+            if not audio:
+                return False
+            with open(out_path, "wb") as f:
+                f.write(base64.b64decode(audio))
+            return True
+        if cfg["provider"] == "stub":                     # QA only: speech-paced babble
+            dur = max(1.2, len(text) * 0.062)
+            _run([_ffmpeg_exe(), "-y", "-f", "lavfi",
+                  "-i", f"sine=frequency=220:duration={dur:.2f}",
+                  "-af", "tremolo=f=5:d=0.8,lowpass=f=1200,volume=0.6",
+                  "-c:a", "libmp3lame", "-q:a", "5", out_path])
+            return True
+    except Exception:                                     # noqa: BLE001
+        return False
+    return False
+
+
+def _audio_duration(path):
+    """Duration in seconds via ffmpeg stderr parse (no ffprobe in the bundle)."""
+    res = subprocess.run([_ffmpeg_exe(), "-i", path, "-f", "null", "-"],
+                         capture_output=True, text=True)
+    m = re.search(r"time=(\d+):(\d+):(\d+\.?\d*)", res.stderr or "")
+    if not m:
+        return None
+    h, mnt, s = m.groups()
+    return int(h) * 3600 + int(mnt) * 60 + float(s)
+
+
 # ---------------------------------------------------------------- gates
 CONTRACTION_RE = re.compile(
     r"\b\w+['\u2019](?:t|re|ll|ve|d|m)\b|\b(?:it|let|that|there|what|who|here)['\u2019]s\b",
@@ -386,24 +489,29 @@ def _run(cmd):
         raise RuntimeError("ffmpeg failed: " + (res.stderr or "")[-800:])
 
 
-def build_video(frames, bed, out_path, scene_secs, workdir, progress=None):
-    """Ken Burns per frame -> chained crossfades -> normalized audio bed."""
+def build_video(frames, bed, out_path, scene_secs, workdir, progress=None,
+                clip_secs=None, narr_files=None):
+    """Ken Burns per frame -> fade-through-black concat -> audio.
+    clip_secs: optional per-clip durations (narration mode); narr_files: optional
+    per-clip narration audio (None entries = silent under the bed)."""
     exe = _ffmpeg_exe()
     clips = []
-    n_frames = int(scene_secs * FPS)
+    durs = clip_secs or [scene_secs] * len(frames)
     fade = 0.35                                        # fade-through-black page turn
     for i, frame in enumerate(frames):
+        d_i = durs[i]
+        n_frames = max(int(d_i * FPS), FPS)
         clip = os.path.join(workdir, f"clip_{i:02d}.mp4")
         zoom = f"min(zoom+{0.10 / n_frames:.6f},1.10)"
         drift = "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)+(on/{n})*40'".format(n=n_frames)
         vf = (
             f"zoompan=z='{zoom}':{drift}:d={n_frames}:s={OUT_W}x{OUT_H}:fps={FPS},"
             f"fade=t=in:st=0:d={fade},"
-            f"fade=t=out:st={scene_secs - fade:.3f}:d={fade},"
+            f"fade=t=out:st={d_i - fade:.3f}:d={fade},"
             f"format=yuv420p"
         )
         _run([exe, "-y", "-threads", "1", "-loop", "1", "-i", frame, "-vf", vf,
-              "-t", f"{scene_secs}", "-c:v", "libx264", "-profile:v", "high",
+              "-t", f"{d_i:.3f}", "-c:v", "libx264", "-profile:v", "high",
               "-preset", "veryfast", "-crf", "20", "-an", clip])
         if progress:
             progress(f"scene {i + 1}/{len(frames)}")
@@ -411,7 +519,7 @@ def build_video(frames, bed, out_path, scene_secs, workdir, progress=None):
 
     # join with the concat demuxer + stream copy: one clip in memory at a time,
     # no filtergraph, no re-encode — this was the OOM step in the xfade design.
-    total = len(clips) * scene_secs
+    total = sum(durs)
     listfile = os.path.join(workdir, "concat.txt")
     with open(listfile, "w") as f:
         for c in clips:
@@ -422,7 +530,42 @@ def build_video(frames, bed, out_path, scene_secs, workdir, progress=None):
     _run([exe, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
           "-c", "copy", silent])
 
-    # audio: loop if short, loudness normalize to -14 LUFS, fade in/out, single AAC encode
+    if narr_files and any(narr_files):
+        # narration track: each unit padded to its clip length, then concatenated
+        if progress:
+            progress("mixing narration")
+        padded = []
+        for i, nf in enumerate(narr_files):
+            pw = os.path.join(workdir, f"narr_{i:02d}.wav")
+            if nf:
+                _run([exe, "-y", "-i", nf,
+                      "-af", f"apad=whole_dur={durs[i]:.3f},atrim=0:{durs[i]:.3f}",
+                      "-ar", "48000", "-ac", "2", pw])
+            else:
+                _run([exe, "-y", "-f", "lavfi",
+                      "-i", f"anullsrc=r=48000:cl=stereo:d={durs[i]:.3f}", pw])
+            padded.append(pw)
+        nlist = os.path.join(workdir, "narr_concat.txt")
+        with open(nlist, "w") as f:
+            for p in padded:
+                f.write(f"file '{p}'\n")
+        narr_track = os.path.join(workdir, "narration.wav")
+        _run([exe, "-y", "-f", "concat", "-safe", "0", "-i", nlist, "-c", "copy", narr_track])
+        # mix: narration on top, bed ducked underneath, one final loudness pass
+        af = (
+            f"[1:a]aloop=loop=-1:size=2e9,atrim=0:{total:.3f},volume={BED_DUCK}[bed];"
+            f"[2:a]atrim=0:{total:.3f}[voice];"
+            f"[voice][bed]amix=inputs=2:duration=first:normalize=0,"
+            f"loudnorm=I=-14:TP=-1.5:LRA=11,"
+            f"afade=t=in:st=0:d=0.6,afade=t=out:st={max(total - 2.0, 0):.3f}:d=2.0[aout]"
+        )
+        _run([exe, "-y", "-i", silent, "-i", bed, "-i", narr_track,
+              "-filter_complex", af, "-map", "0:v", "-map", "[aout]", "-c:v", "copy",
+              "-c:a", "aac", "-b:a", "224k", "-ar", "48000", "-ac", "2",
+              "-shortest", "-movflags", "+faststart", out_path])
+        return total
+
+    # bed-only (phase one behaviour, and the fallback when TTS is off or fails)
     af = (
         f"aloop=loop=-1:size=2e9,atrim=0:{total:.3f},"
         f"loudnorm=I=-14:TP=-1.5:LRA=11,"
@@ -472,11 +615,49 @@ def _render_job(job_id, payload, bed, scene_secs):
         out_path = os.path.join(JOB_DIR, f"{job_id}.mp4")
         beat = lambda step: _write_status(job_id, status="rendering",
                                           bed=os.path.basename(bed), step=step)
-        total = build_video(frames, bed, out_path, scene_secs, workdir, progress=beat)
+
+        # narration (phase 2a): synth per unit; any failure -> bed-only fallback
+        clip_secs = None
+        narr_files = None
+        cfg = _tts_cfg(title)
+        want_narration = payload.get("narration", _tts_ready(cfg))
+        if want_narration and _tts_ready(cfg):
+            units = [f"{title}." if not title.endswith((".", "!", "?")) else title]
+            units += [s["text"].strip() for s in scenes]
+            units += [cta]
+            nfiles, nsecs, ok = [], [], True
+            for i, text in enumerate(units):
+                beat(f"narration {i + 1}/{len(units)}")
+                nf = os.path.join(workdir, f"tts_{i:02d}.mp3")
+                if not _synth_narration(text, nf, cfg):
+                    ok = False
+                    break
+                d = _audio_duration(nf)
+                if not d:
+                    ok = False
+                    break
+                nfiles.append(nf)
+                nsecs.append(min(max(d + NARR_PAD, NARR_MIN), NARR_MAX))
+            if ok:
+                total_est = sum(nsecs)
+                if total_est > MAX_TOTAL:               # tighten pads before giving up
+                    squeeze = [min(max(d, NARR_MIN), NARR_MAX) - 0.6 for d in nsecs]
+                    if sum(squeeze) <= MAX_TOTAL:
+                        nsecs = squeeze
+                    else:
+                        raise RuntimeError(
+                            f"narrated duration {total_est:.0f}s exceeds {MAX_TOTAL}s Reel cap "
+                            f"— shorten scenes (writer scene cap) or reduce scene count")
+                clip_secs, narr_files = nsecs, nfiles
+
+        total = build_video(frames, bed, out_path, scene_secs, workdir, progress=beat,
+                            clip_secs=clip_secs, narr_files=narr_files)
         with JOBS_LOCK:
-            JOBS[job_id].update(status="done", path=out_path, duration=round(total, 2))
+            JOBS[job_id].update(status="done", path=out_path, duration=round(total, 2),
+                                narrated=bool(narr_files), voice=(cfg["voice"] if narr_files else None))
         _write_status(job_id, status="done", bed=os.path.basename(bed),
-                      duration=round(total, 2))
+                      duration=round(total, 2), narrated=bool(narr_files),
+                      voice=(cfg["voice"] if narr_files else None))
     except Exception as exc:                            # noqa: BLE001
         with JOBS_LOCK:
             JOBS[job_id].update(status="error", error=str(exc)[:800])
@@ -532,6 +713,8 @@ def story_status(job_id):
         body["video_url"] = f"{request.url_root.rstrip('/')}/render/story/media/{job_id}.mp4"
         body["duration_seconds"] = meta.get("duration")
         body["bed"] = meta.get("bed")
+        body["narrated"] = meta.get("narrated", False)
+        body["voice"] = meta.get("voice")
     if meta["status"] == "error":
         body["error"] = meta.get("error")
     return jsonify(body)
@@ -560,7 +743,14 @@ def story_health():
     )
     if not beds:
         problems.append("no audio beds in audio/ (expected e.g. audio/bed_folktale.mp3)")
+    cfg = _tts_cfg()
+    narration = {"provider": cfg["provider"],
+                 "ready": _tts_ready(cfg),
+                 "voice_count": len(cfg["voice_pool"]),
+                 "sample_voice": cfg["voice"] or "(default)"} if cfg["provider"] != "off" else {
+                 "provider": "off"}
     return jsonify({
+        "narration": narration,
         "status": "ok" if not problems else "degraded",
         "ffmpeg": "unavailable — check requirements.txt (imageio-ffmpeg)" if any("ffmpeg" in p for p in problems) else "bundled (imageio-ffmpeg)",
         "audio_beds": beds,
