@@ -164,7 +164,12 @@ def _pick_bed(mood, title, explicit=None):
 #   ELEVENLABS_API_KEY, STORY_VOICE_ID               (ElevenLabs)
 #   GOOGLE_TTS_API_KEY, STORY_VOICE_ID e.g. en-NG-Standard-A (Google)
 NARR_PAD = 1.4                       # breathing room after each scene's narration
-NARR_MIN, NARR_MAX = 4.0, 14.0       # per-scene duration bounds when narrated
+NARR_PAD_MIN = 0.35                  # squeeze floor: the pad shrinks, the voice is never cut
+NARR_MIN = 4.0                       # a scene never flashes past, even on a short line
+NARR_MAX = 14.0                      # ADVISORY ONLY — a scene longer than this is reported in
+                                     # status as a long_scene so the writer can split it. It is
+                                     # NOT enforced by clamping: clamping the clip below its own
+                                     # narration made build_video's atrim cut the voice mid-sentence.
 BED_DUCK = 0.22                      # bed volume under narration
 
 
@@ -292,7 +297,8 @@ def validate_payload(p):
         errors.append("title is required")
     if not isinstance(scenes, list) or not (2 <= len(scenes) <= MAX_SCENES):
         errors.append(f"scenes must be a list of 2-{MAX_SCENES} items")
-    texts = [title, p.get("kicker", ""), p.get("cta", "")]
+    texts = [title, p.get("kicker", ""), p.get("cta", ""),
+             p.get("masthead", ""), p.get("tagline", "")]
     for i, s in enumerate(scenes if isinstance(scenes, list) else []):
         t = (s.get("text") or "").strip() if isinstance(s, dict) else ""
         if not t:
@@ -402,8 +408,8 @@ def _base_frame():
     return img, d
 
 
-def _masthead(d):
-    _letterspaced(d, (0, 168), MASTHEAD, _font(34, serif=False, bold=True),
+def _masthead(d, text=None):
+    _letterspaced(d, (0, 168), text or MASTHEAD, _font(34, serif=False, bold=True),
                   GOLD, tracking=9, anchor_center_w=FRAME_W)
 
 
@@ -430,9 +436,9 @@ def _footer(d, text):
     d.text(((FRAME_W - tw) / 2, FRAME_H - 220), text, font=f, fill=GREY)
 
 
-def render_title_frame(path, title, kicker):
+def render_title_frame(path, title, kicker, masthead=None, tagline=None):
     img, d = _base_frame()
-    _masthead(d)
+    _masthead(d, masthead)
     _chip(d, 560, kicker.upper())
     f, lines, lh = _fit_serif(d, title, FRAME_W - 320, 760, start=128, floor=64)
     y = (FRAME_H - len(lines) * lh) // 2 - 40
@@ -440,13 +446,13 @@ def render_title_frame(path, title, kicker):
         d.text(((FRAME_W - d.textlength(line, font=f)) / 2, y), line, font=f, fill=CREAM)
         y += lh
     _dotted_divider(d, y + 60)
-    _footer(d, TAGLINE)
+    _footer(d, tagline or TAGLINE)
     img.resize((828, 1472), Image.LANCZOS).save(path, "PNG")
 
 
-def render_scene_frame(path, text, idx, total, label=None):
+def render_scene_frame(path, text, idx, total, label=None, masthead=None, tagline=None):
     img, d = _base_frame()
-    _masthead(d)
+    _masthead(d, masthead)
     lab = (label or f"SCENE {idx}").upper()
     fl = _font(36, serif=False, bold=True)
     _letterspaced(d, (0, 520), lab, fl, GOLD, tracking=7, anchor_center_w=FRAME_W)
@@ -462,13 +468,13 @@ def render_scene_frame(path, text, idx, total, label=None):
     for i in range(total):
         fill = GOLD if i < idx else (70, 74, 82)
         d.ellipse([x + i * gap - r, dy - r, x + i * gap + r, dy + r], fill=fill)
-    _footer(d, TAGLINE)
+    _footer(d, tagline or TAGLINE)
     img.resize((828, 1472), Image.LANCZOS).save(path, "PNG")
 
 
-def render_cta_frame(path, title, cta):
+def render_cta_frame(path, title, cta, masthead=None, tagline=None):
     img, d = _base_frame()
-    _masthead(d)
+    _masthead(d, masthead)
     ft = _font(46, serif=True, bold=True)
     d.text(((FRAME_W - d.textlength(title, font=ft)) / 2, 620), title, font=ft, fill=GREY)
     _dotted_divider(d, 740)
@@ -480,7 +486,7 @@ def render_cta_frame(path, title, cta):
     fh = _font(48, serif=False, bold=True)
     tag = "#TrendRadarNG"
     d.text(((FRAME_W - d.textlength(tag, font=fh)) / 2, y + 90), tag, font=fh, fill=GOLD)
-    _footer(d, TAGLINE)
+    _footer(d, tagline or TAGLINE)
     img.resize((828, 1472), Image.LANCZOS).save(path, "PNG")
 
 
@@ -613,16 +619,21 @@ def _render_job(job_id, payload, bed, scene_secs):
         title = payload["title"].strip()
         kicker = (payload.get("kicker") or "NIGERIAN FOLKTALE").strip()
         cta = (payload.get("cta") or "Follow Trend Radar NG for more stories.").strip()
+        # lane identity: any lane on this renderer can carry its own masthead and tagline.
+        # Omitted -> the Heritage defaults, so existing callers are untouched.
+        masthead = (payload.get("masthead") or "").strip() or None
+        tagline = (payload.get("tagline") or "").strip() or None
         scenes = payload["scenes"]
         stamp = f"{time.time():.6f}".replace(".", "")   # microsecond-precision names
         frames = [os.path.join(workdir, f"f{stamp}_00_title.png")]
-        render_title_frame(frames[0], title, kicker)
+        render_title_frame(frames[0], title, kicker, masthead, tagline)
         for i, s in enumerate(scenes, start=1):
             fp = os.path.join(workdir, f"f{stamp}_{i:02d}_scene.png")
-            render_scene_frame(fp, s["text"].strip(), i, len(scenes), s.get("label"))
+            render_scene_frame(fp, s["text"].strip(), i, len(scenes), s.get("label"),
+                               masthead, tagline)
             frames.append(fp)
         cta_fp = os.path.join(workdir, f"f{stamp}_{len(scenes) + 1:02d}_cta.png")
-        render_cta_frame(cta_fp, title, cta)
+        render_cta_frame(cta_fp, title, cta, masthead, tagline)
         frames.append(cta_fp)
 
         out_path = os.path.join(JOB_DIR, f"{job_id}.mp4")
@@ -632,6 +643,7 @@ def _render_job(job_id, payload, bed, scene_secs):
         # narration (phase 2a): synth per unit; any failure -> bed-only fallback
         clip_secs = None
         narr_files = None
+        long_scenes = []
         cfg = _tts_cfg(title)
         want_narration = payload.get("narration", _tts_ready(cfg))
         narr_error = None
@@ -639,7 +651,7 @@ def _render_job(job_id, payload, bed, scene_secs):
             units = [f"{title}." if not title.endswith((".", "!", "?")) else title]
             units += [s["text"].strip() for s in scenes]
             units += [cta]
-            nfiles, nsecs, ok, narr_error = [], [], True, None
+            nfiles, nsecs, adurs, ok, narr_error = [], [], [], True, None
             for i, text in enumerate(units):
                 beat(f"narration {i + 1}/{len(units)}")
                 nf = os.path.join(workdir, f"tts_{i:02d}.mp3")
@@ -654,17 +666,23 @@ def _render_job(job_id, payload, bed, scene_secs):
                     # from text length rather than discarding the whole story's narration
                     d = max(1.2, len(text) * 0.075)
                 nfiles.append(nf)
-                nsecs.append(min(max(d + NARR_PAD, NARR_MIN), NARR_MAX))
+                adurs.append(d)
+                # the clip is the narration plus breathing room. NEVER shorter than the
+                # audio: build_video trims the voice to the clip, so a clamp here is a cut.
+                nsecs.append(max(d + NARR_PAD, NARR_MIN))
             if ok:
                 total_est = sum(nsecs)
                 if total_est > MAX_TOTAL:               # tighten pads before giving up
-                    squeeze = [min(max(d, NARR_MIN), NARR_MAX) - 0.6 for d in nsecs]
+                    squeeze = [max(a + NARR_PAD_MIN, NARR_MIN) for a in adurs]
                     if sum(squeeze) <= MAX_TOTAL:
                         nsecs = squeeze
                     else:
+                        over = sum(squeeze) - MAX_TOTAL
                         raise RuntimeError(
-                            f"narrated duration {total_est:.0f}s exceeds {MAX_TOTAL}s Reel cap "
-                            f"— shorten scenes (writer scene cap) or reduce scene count")
+                            f"narrated duration {sum(squeeze):.0f}s exceeds the {MAX_TOTAL}s Reel cap "
+                            f"even at minimum pads: cut roughly {int(over * 2.5) + 1} words from the "
+                            f"script, or reduce the scene count")
+                long_scenes = [i + 1 for i, a in enumerate(adurs) if a + NARR_PAD > NARR_MAX]
                 clip_secs, narr_files = nsecs, nfiles
 
         total = build_video(frames, bed, out_path, scene_secs, workdir, progress=beat,
@@ -673,11 +691,13 @@ def _render_job(job_id, payload, bed, scene_secs):
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", path=out_path, duration=round(total, 2),
                                 narrated=bool(narr_files), voice=(cfg["voice"] if narr_files else None),
-                                narration_error=narr_err_final)
+                                narration_error=narr_err_final,
+                                long_scenes=(long_scenes if narr_files else []))
         _write_status(job_id, status="done", bed=os.path.basename(bed),
                       duration=round(total, 2), narrated=bool(narr_files),
                       voice=(cfg["voice"] if narr_files else None),
-                      narration_error=narr_err_final)
+                      narration_error=narr_err_final,
+                      long_scenes=(long_scenes if narr_files else []))
     except Exception as exc:                            # noqa: BLE001
         with JOBS_LOCK:
             JOBS[job_id].update(status="error", error=str(exc)[:800])
@@ -715,7 +735,10 @@ def story_status(job_id):
         mp4 = os.path.join(JOB_DIR, f"{job_id}.mp4")
         if disk and disk.get("status") == "done" and os.path.exists(mp4):
             meta = {"status": "done", "path": mp4,
-                    "duration": disk.get("duration"), "bed": disk.get("bed")}
+                    "duration": disk.get("duration"), "bed": disk.get("bed"),
+                    "narrated": disk.get("narrated", False), "voice": disk.get("voice"),
+                    "narration_error": disk.get("narration_error"),
+                    "long_scenes": disk.get("long_scenes") or []}
             with JOBS_LOCK:
                 JOBS[job_id] = {**meta, "created": time.time()}
         elif disk and disk.get("status") == "error":
@@ -737,6 +760,11 @@ def story_status(job_id):
         body["voice"] = meta.get("voice")
         if meta.get("narration_error"):
             body["narration_error"] = meta["narration_error"]
+        if meta.get("long_scenes"):
+            body["long_scenes"] = meta["long_scenes"]
+            body["long_scene_note"] = (
+                f"scene(s) run past {NARR_MAX:.0f}s of narration; the voice is intact but the "
+                f"card holds a long time — consider splitting them")
     if meta["status"] == "error":
         body["error"] = meta.get("error")
     return jsonify(body)
