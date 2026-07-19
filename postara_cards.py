@@ -175,9 +175,16 @@ def _grain(img, amount=9):
 
 def _save(img, out_dir, prefix):
     os.makedirs(out_dir, exist_ok=True)
-    fname = f"{prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')}.png"
+    stamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')
+    fname = f"{prefix}_{stamp}.png"
     path = os.path.join(out_dir, fname)
     img.save(path, "PNG")
+    # Instagram's image_url ingestion accepts JPEG only; Facebook takes the PNG
+    # as-is. Write a JPEG twin alongside so the IG publisher can point at it.
+    # RGB flatten mirrors the app-wide _send_image() helper. Additive: the PNG
+    # and its url() are unchanged, so every existing Facebook lane is untouched.
+    img.convert("RGB").save(
+        os.path.join(out_dir, f"{prefix}_{stamp}.jpg"), "JPEG", quality=92)
     return fname, path
 
 
@@ -391,16 +398,19 @@ def _guard(data, keys):
 
 
 def _url(fname):
+    jpg = fname.rsplit(".", 1)[0] + ".jpg"
     return jsonify({"filename": fname,
                     "url": url_for("static", filename=f"postara/{fname}",
-                                   _external=True)})
+                                   _external=True),
+                    "url_jpg": url_for("static", filename=f"postara/{jpg}",
+                                       _external=True)})
 
 
 @postara_bp.route("/postara/health", methods=["GET"])
 def health():
     return jsonify({
         "ok": bool(fonts_ready()),
-        "version": "2.0",
+        "version": "2.1",
         "lanes": ["autopilot-receipts", "smb-tips", "trend-pulse",
                   "suppression-log", "fleet-proof", "calgary-smb-signal",
                   "insight"],
