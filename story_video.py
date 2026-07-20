@@ -447,7 +447,10 @@ def render_title_frame(path, title, kicker, masthead=None, tagline=None):
         y += lh
     _dotted_divider(d, y + 60)
     _footer(d, tagline or TAGLINE)
-    img.resize((828, 1472), Image.LANCZOS).save(path, "PNG")
+    small = img.resize((828, 1472), Image.LANCZOS)
+    small.save(path, "PNG")
+    small.close()
+    img.close()
 
 
 def render_scene_frame(path, text, idx, total, label=None, masthead=None, tagline=None):
@@ -469,7 +472,10 @@ def render_scene_frame(path, text, idx, total, label=None, masthead=None, taglin
         fill = GOLD if i < idx else (70, 74, 82)
         d.ellipse([x + i * gap - r, dy - r, x + i * gap + r, dy + r], fill=fill)
     _footer(d, tagline or TAGLINE)
-    img.resize((828, 1472), Image.LANCZOS).save(path, "PNG")
+    small = img.resize((828, 1472), Image.LANCZOS)
+    small.save(path, "PNG")
+    small.close()
+    img.close()
 
 
 def render_cta_frame(path, title, cta, masthead=None, tagline=None):
@@ -487,7 +493,10 @@ def render_cta_frame(path, title, cta, masthead=None, tagline=None):
     tag = "#TrendRadarNG"
     d.text(((FRAME_W - d.textlength(tag, font=fh)) / 2, y + 90), tag, font=fh, fill=GOLD)
     _footer(d, tagline or TAGLINE)
-    img.resize((828, 1472), Image.LANCZOS).save(path, "PNG")
+    small = img.resize((828, 1472), Image.LANCZOS)
+    small.save(path, "PNG")
+    small.close()
+    img.close()
 
 
 # ---------------------------------------------------------------- ffmpeg
@@ -502,14 +511,28 @@ def _ffmpeg_exe():
         raise RuntimeError("ffmpeg not available: add imageio-ffmpeg to requirements.txt")
 
 
-def _run(cmd):
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        raise RuntimeError("ffmpeg failed: " + (res.stderr or "")[-800:])
+def _run(cmd, heartbeat=None):
+    """Run ffmpeg. If a heartbeat callable is given, invoke it every ~15s while
+    the process works, so a long encode on the shared 512MB box is never
+    mistaken for a dead worker by the status watchdog."""
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True)
+    while True:
+        try:
+            _, err = proc.communicate(timeout=15)
+            break
+        except subprocess.TimeoutExpired:
+            if heartbeat:
+                try:
+                    heartbeat()
+                except Exception:                       # noqa: BLE001
+                    pass
+    if proc.returncode != 0:
+        raise RuntimeError("ffmpeg failed: " + (err or "")[-800:])
 
 
 def build_video(frames, bed, out_path, scene_secs, workdir, progress=None,
-                clip_secs=None, narr_files=None):
+                clip_secs=None, narr_files=None, heartbeat=None):
     """Ken Burns per frame -> fade-through-black concat -> audio.
     clip_secs: optional per-clip durations (narration mode); narr_files: optional
     per-clip narration audio (None entries = silent under the bed)."""
@@ -518,6 +541,8 @@ def build_video(frames, bed, out_path, scene_secs, workdir, progress=None,
     durs = clip_secs or [scene_secs] * len(frames)
     fade = 0.35                                        # fade-through-black page turn
     for i, frame in enumerate(frames):
+        if progress:
+            progress(f"encoding scene {i + 1}/{len(frames)}")
         d_i = durs[i]
         n_frames = max(int(d_i * FPS), FPS)
         clip = os.path.join(workdir, f"clip_{i:02d}.mp4")
@@ -531,9 +556,8 @@ def build_video(frames, bed, out_path, scene_secs, workdir, progress=None,
         )
         _run([exe, "-y", "-threads", "1", "-loop", "1", "-i", frame, "-vf", vf,
               "-t", f"{d_i:.3f}", "-c:v", "libx264", "-profile:v", "high",
-              "-preset", "veryfast", "-crf", "20", "-an", clip])
-        if progress:
-            progress(f"scene {i + 1}/{len(frames)}")
+              "-preset", "ultrafast", "-crf", "21", "-an", clip],
+             heartbeat=heartbeat)
         clips.append(clip)
 
     # join with the concat demuxer + stream copy: one clip in memory at a time,
@@ -547,7 +571,7 @@ def build_video(frames, bed, out_path, scene_secs, workdir, progress=None,
     if progress:
         progress("joining scenes")
     _run([exe, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
-          "-c", "copy", silent])
+          "-c", "copy", silent], heartbeat=heartbeat)
 
     if narr_files and any(narr_files):
         # narration track: each unit padded to its clip length, then concatenated
@@ -578,10 +602,10 @@ def build_video(frames, bed, out_path, scene_secs, workdir, progress=None,
             f"loudnorm=I=-14:TP=-1.5:LRA=11,"
             f"afade=t=in:st=0:d=0.6,afade=t=out:st={max(total - 2.0, 0):.3f}:d=2.0[aout]"
         )
-        _run([exe, "-y", "-i", silent, "-i", bed, "-i", narr_track,
+        _run([exe, "-y", "-threads", "1", "-i", silent, "-i", bed, "-i", narr_track,
               "-filter_complex", af, "-map", "0:v", "-map", "[aout]", "-c:v", "copy",
               "-c:a", "aac", "-b:a", "224k", "-ar", "48000", "-ac", "2",
-              "-shortest", "-movflags", "+faststart", out_path])
+              "-shortest", "-movflags", "+faststart", out_path], heartbeat=heartbeat)
         return total
 
     # bed-only (phase one behaviour, and the fallback when TTS is off or fails)
@@ -590,11 +614,11 @@ def build_video(frames, bed, out_path, scene_secs, workdir, progress=None,
         f"loudnorm=I=-14:TP=-1.5:LRA=11,"
         f"afade=t=in:st=0:d=1.0,afade=t=out:st={max(total - 2.0, 0):.3f}:d=2.0"
     )
-    _run([exe, "-y", "-i", silent, "-i", bed, "-af", af,
+    _run([exe, "-y", "-threads", "1", "-i", silent, "-i", bed, "-af", af,
           "-map", "0:v", "-map", "1:a", "-c:v", "copy",
           "-c:a", "aac", "-b:a", "224k", "-ar", "48000", "-ac", "2",
           "-shortest", "-movflags", "+faststart",
-          out_path])
+          out_path], heartbeat=heartbeat)
     return total
 
 
@@ -636,9 +660,12 @@ def _render_job(job_id, payload, bed, scene_secs):
         render_cta_frame(cta_fp, title, cta, masthead, tagline)
         frames.append(cta_fp)
 
+        import gc
+        gc.collect()                                    # frame-stage intermediates go now
         out_path = os.path.join(JOB_DIR, f"{job_id}.mp4")
         beat = lambda step: _write_status(job_id, status="rendering",
                                           bed=os.path.basename(bed), step=step)
+        hb = lambda: os.utime(_status_path(job_id))     # cheap mtime touch = heartbeat
 
         # narration (phase 2a): synth per unit; any failure -> bed-only fallback
         clip_secs = None
@@ -686,7 +713,7 @@ def _render_job(job_id, payload, bed, scene_secs):
                 clip_secs, narr_files = nsecs, nfiles
 
         total = build_video(frames, bed, out_path, scene_secs, workdir, progress=beat,
-                            clip_secs=clip_secs, narr_files=narr_files)
+                            clip_secs=clip_secs, narr_files=narr_files, heartbeat=hb)
         narr_err_final = narr_error if (want_narration and _tts_ready(cfg) and not narr_files) else None
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", path=out_path, duration=round(total, 2),
