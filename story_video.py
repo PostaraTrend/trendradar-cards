@@ -1,6 +1,18 @@
 """
-TRNG Story Video Renderer — /render/story
-Animated storytelling Reels (1080x1920 MP4, H.264 + AAC) for Trend Radar Nigeria.
+Story Video Renderer — /render/story
+Animated storytelling Reels (1080x1920 MP4, H.264 + AAC), shared by every story
+lane on this service.
+
+BRANDS: the payload may carry "brand" (trng | postara). The brand sets the
+palette, masthead, tagline, sign-off hashtag and the kicker/CTA fallbacks, so
+the Nigerian lanes and the Canadian PostaraTrend lane render from one module
+without leaking each other's identity. No brand -> trng, which is exactly the
+palette this module carried before brands existed. Payload masthead, tagline,
+hashtag, kicker and cta still override the brand one string at a time.
+
+VOICE: the payload may carry "voice" (an ElevenLabs id, or a comma-separated
+pool). It overrides the STORY_VOICE_ID env var for that render only, so one
+lane can change narrator without changing it for every other lane.
 
 Pipeline: scene JSON -> Pillow frames (house style) -> ffmpeg Ken Burns +
 crossfades -> audio bed (loudness normalized, faded) -> MP4 served from /tmp.
@@ -84,6 +96,40 @@ def _read_status(job_id):
 
 MASTHEAD = "TREND RADAR NG  •  HERITAGE STORIES"
 TAGLINE = "Stories of Naija. Told with pride."
+
+# ---------------------------------------------------------------- brands
+# A lane's identity lives here: colours, masthead, tagline, sign-off hashtag and
+# the kicker/CTA fallbacks. A payload with no "brand" resolves to trng, so every
+# caller that existed before this table renders byte-identically to before.
+BRANDS = {
+    "trng": {
+        "ink": INK, "ink_lift": INK_LIFT, "accent": GOLD,
+        "body": CREAM, "muted": GREY,
+        "masthead": MASTHEAD, "tagline": TAGLINE,
+        "hashtag": "#TrendRadarNG",
+        "kicker": "NIGERIAN FOLKTALE",
+        "cta": "Follow Trend Radar NG for more stories.",
+    },
+    "postara": {
+        "ink": (17, 43, 84),            # #112B54 site navy
+        "ink_lift": (26, 58, 107),      # #1A3A6B
+        "accent": (93, 202, 165),       # #5DCAA5 site green, 7.0:1 on the navy
+        "body": (234, 241, 247),        # #EAF1F7 cool white
+        "muted": GREY,
+        "masthead": "POSTARATREND  •  FIRST NATIONS HERITAGE",
+        "tagline": "Stories of this land. Told with respect.",
+        "hashtag": "#PostaraTrend",
+        "kicker": "FIRST NATIONS HERITAGE",
+        "cta": "Follow PostaraTrend for more stories.",
+    },
+}
+DEFAULT_BRAND = "trng"
+
+
+def _brand(name=None):
+    """Resolve a brand name to its token set. Empty or unknown falls back to
+    trng, which is exactly the palette this module carried before brands."""
+    return BRANDS.get(str(name or DEFAULT_BRAND).strip().lower(), BRANDS[DEFAULT_BRAND])
 
 
 # ---------------------------------------------------------------- fonts
@@ -173,12 +219,17 @@ NARR_MAX = 14.0                      # ADVISORY ONLY — a scene longer than thi
 BED_DUCK = 0.22                      # bed volume under narration
 
 
-def _tts_cfg(title=""):
+def _tts_cfg(title="", voice_override=""):
     """STORY_VOICE_ID may be a single id or a comma-separated list. A list
     rotates deterministically on the story title (same pattern as bed
     rotation): a re-render of the same story keeps its voice; different
-    stories vary across the set."""
-    raw_voices = [v.strip() for v in (os.environ.get("STORY_VOICE_ID") or "").split(",") if v.strip()]
+    stories vary across the set.
+
+    voice_override comes from the render payload and wins over the env var, so
+    one lane can carry its own narrator without changing the voice every other
+    lane on this service hears. A comma-separated override rotates too."""
+    source = (voice_override or "").strip() or (os.environ.get("STORY_VOICE_ID") or "")
+    raw_voices = [v.strip() for v in source.split(",") if v.strip()]
     if len(raw_voices) > 1:
         import hashlib
         idx = int(hashlib.md5((title or "").encode("utf-8")).hexdigest(), 16) % len(raw_voices)
@@ -307,6 +358,10 @@ def validate_payload(p):
     hits = sorted({h for t in texts for h in find_contractions(t)})
     if hits:
         errors.append("contractions not allowed: " + ", ".join(hits))
+    brand = (p.get("brand") or "").strip().lower()
+    if brand and brand not in BRANDS:
+        # a typo in a Settings cell must not silently ship the wrong brand
+        errors.append(f"unknown brand '{brand}' (available: {', '.join(sorted(BRANDS))})")
     mood = (p.get("mood") or "folktale").strip().lower()
     bed, beds = _pick_bed(mood, title, (p.get("bed") or "").strip() or None)
     if bed is None:
@@ -389,110 +444,121 @@ def _glow(img, cx, cy, radius, color, peak=46):
     img.paste(Image.composite(overlay, img, glow), (0, 0))
 
 
-def _base_frame():
-    img = Image.new("RGB", (FRAME_W, FRAME_H), INK)
+def _base_frame(b=None):
+    b = b or _brand()
+    ink, lift, accent = b["ink"], b["ink_lift"], b["accent"]
+    img = Image.new("RGB", (FRAME_W, FRAME_H), ink)
     d = ImageDraw.Draw(img)
     for y in range(FRAME_H):                       # subtle vertical lift
         if y % 3 == 0:
             t = y / FRAME_H
-            c = tuple(int(INK[i] + (INK_LIFT[i] - INK[i]) * (1 - abs(t - 0.35) * 1.6)) for i in range(3))
+            c = tuple(int(ink[i] + (lift[i] - ink[i]) * (1 - abs(t - 0.35) * 1.6)) for i in range(3))
             d.line([(0, y), (FRAME_W, y)], fill=c)
-    _glow(img, FRAME_W // 2, int(FRAME_H * 0.34), int(FRAME_W * 0.62), GOLD, peak=26)
+    _glow(img, FRAME_W // 2, int(FRAME_H * 0.34), int(FRAME_W * 0.62), accent, peak=26)
     d = ImageDraw.Draw(img)
-    # gold corner ornaments
+    # corner ornaments in the brand accent
     m, L, wpx = 84, 150, 5
     for cx, cy, dx, dy in [(m, m, 1, 1), (FRAME_W - m, m, -1, 1),
                            (m, FRAME_H - m, 1, -1), (FRAME_W - m, FRAME_H - m, -1, -1)]:
-        d.line([(cx, cy), (cx + dx * L, cy)], fill=GOLD, width=wpx)
-        d.line([(cx, cy), (cx, cy + dy * L)], fill=GOLD, width=wpx)
+        d.line([(cx, cy), (cx + dx * L, cy)], fill=accent, width=wpx)
+        d.line([(cx, cy), (cx, cy + dy * L)], fill=accent, width=wpx)
     return img, d
 
 
-def _masthead(d, text=None):
-    _letterspaced(d, (0, 168), text or MASTHEAD, _font(34, serif=False, bold=True),
-                  GOLD, tracking=9, anchor_center_w=FRAME_W)
+def _masthead(d, text=None, b=None):
+    b = b or _brand()
+    _letterspaced(d, (0, 168), text or b["masthead"], _font(34, serif=False, bold=True),
+                  b["accent"], tracking=9, anchor_center_w=FRAME_W)
 
 
-def _dotted_divider(d, y, width=420):
+def _dotted_divider(d, y, width=420, b=None):
+    b = b or _brand()
     x0 = (FRAME_W - width) // 2
     for x in range(x0, x0 + width, 26):
-        d.ellipse([x, y, x + 8, y + 8], fill=GOLD)
+        d.ellipse([x, y, x + 8, y + 8], fill=b["accent"])
 
 
-def _chip(d, cy, label):
+def _chip(d, cy, label, b=None):
     f = _font(34, serif=False, bold=True)
     tw = d.textlength(label, font=f)
     pad_x, pad_y = 38, 20
     x0 = (FRAME_W - tw) / 2 - pad_x
     x1 = (FRAME_W + tw) / 2 + pad_x
+    b = b or _brand()
     d.rounded_rectangle([x0, cy, x1, cy + f.size + 2 * pad_y], radius=14,
-                        outline=GOLD, width=4)
-    d.text(((FRAME_W - tw) / 2, cy + pad_y), label, font=f, fill=GOLD)
+                        outline=b["accent"], width=4)
+    d.text(((FRAME_W - tw) / 2, cy + pad_y), label, font=f, fill=b["accent"])
 
 
-def _footer(d, text):
+def _footer(d, text, b=None):
+    b = b or _brand()
     f = _font(34, serif=False, bold=False)
     tw = d.textlength(text, font=f)
-    d.text(((FRAME_W - tw) / 2, FRAME_H - 220), text, font=f, fill=GREY)
+    d.text(((FRAME_W - tw) / 2, FRAME_H - 220), text, font=f, fill=b["muted"])
 
 
-def render_title_frame(path, title, kicker, masthead=None, tagline=None):
-    img, d = _base_frame()
-    _masthead(d, masthead)
-    _chip(d, 560, kicker.upper())
+def render_title_frame(path, title, kicker, masthead=None, tagline=None, brand=None):
+    b = _brand(brand)
+    img, d = _base_frame(b)
+    _masthead(d, masthead, b)
+    _chip(d, 560, kicker.upper(), b)
     f, lines, lh = _fit_serif(d, title, FRAME_W - 320, 760, start=128, floor=64)
     y = (FRAME_H - len(lines) * lh) // 2 - 40
     for line in lines:
-        d.text(((FRAME_W - d.textlength(line, font=f)) / 2, y), line, font=f, fill=CREAM)
+        d.text(((FRAME_W - d.textlength(line, font=f)) / 2, y), line, font=f, fill=b["body"])
         y += lh
-    _dotted_divider(d, y + 60)
-    _footer(d, tagline or TAGLINE)
+    _dotted_divider(d, y + 60, b=b)
+    _footer(d, tagline or b["tagline"], b)
     small = img.resize((828, 1472), Image.LANCZOS)
     small.save(path, "PNG")
     small.close()
     img.close()
 
 
-def render_scene_frame(path, text, idx, total, label=None, masthead=None, tagline=None):
-    img, d = _base_frame()
-    _masthead(d, masthead)
+def render_scene_frame(path, text, idx, total, label=None, masthead=None, tagline=None,
+                       brand=None):
+    b = _brand(brand)
+    img, d = _base_frame(b)
+    _masthead(d, masthead, b)
     lab = (label or f"SCENE {idx}").upper()
     fl = _font(36, serif=False, bold=True)
-    _letterspaced(d, (0, 520), lab, fl, GOLD, tracking=7, anchor_center_w=FRAME_W)
+    _letterspaced(d, (0, 520), lab, fl, b["accent"], tracking=7, anchor_center_w=FRAME_W)
     f, lines, lh = _fit_serif(d, text, FRAME_W - 300, 1000, start=92, floor=54, bold=False, spacing=1.42)
     y = (FRAME_H - len(lines) * lh) // 2
     for line in lines:
-        d.text(((FRAME_W - d.textlength(line, font=f)) / 2, y), line, font=f, fill=CREAM)
+        d.text(((FRAME_W - d.textlength(line, font=f)) / 2, y), line, font=f, fill=b["body"])
         y += lh
     # progress dots
     r, gap = 9, 44
     x = (FRAME_W - (total - 1) * gap) / 2
     dy = FRAME_H - 330
     for i in range(total):
-        fill = GOLD if i < idx else (70, 74, 82)
+        fill = b["accent"] if i < idx else (70, 74, 82)
         d.ellipse([x + i * gap - r, dy - r, x + i * gap + r, dy + r], fill=fill)
-    _footer(d, tagline or TAGLINE)
+    _footer(d, tagline or b["tagline"], b)
     small = img.resize((828, 1472), Image.LANCZOS)
     small.save(path, "PNG")
     small.close()
     img.close()
 
 
-def render_cta_frame(path, title, cta, masthead=None, tagline=None):
-    img, d = _base_frame()
-    _masthead(d, masthead)
+def render_cta_frame(path, title, cta, masthead=None, tagline=None, brand=None,
+                     hashtag=None):
+    b = _brand(brand)
+    img, d = _base_frame(b)
+    _masthead(d, masthead, b)
     ft = _font(46, serif=True, bold=True)
-    d.text(((FRAME_W - d.textlength(title, font=ft)) / 2, 620), title, font=ft, fill=GREY)
-    _dotted_divider(d, 740)
+    d.text(((FRAME_W - d.textlength(title, font=ft)) / 2, 620), title, font=ft, fill=b["muted"])
+    _dotted_divider(d, 740, b=b)
     f, lines, lh = _fit_serif(d, cta, FRAME_W - 320, 640, start=100, floor=58)
     y = (FRAME_H - len(lines) * lh) // 2
     for line in lines:
-        d.text(((FRAME_W - d.textlength(line, font=f)) / 2, y), line, font=f, fill=CREAM)
+        d.text(((FRAME_W - d.textlength(line, font=f)) / 2, y), line, font=f, fill=b["body"])
         y += lh
     fh = _font(48, serif=False, bold=True)
-    tag = "#TrendRadarNG"
-    d.text(((FRAME_W - d.textlength(tag, font=fh)) / 2, y + 90), tag, font=fh, fill=GOLD)
-    _footer(d, tagline or TAGLINE)
+    tag = (hashtag or "").strip() or b["hashtag"]
+    d.text(((FRAME_W - d.textlength(tag, font=fh)) / 2, y + 90), tag, font=fh, fill=b["accent"])
+    _footer(d, tagline or b["tagline"], b)
     small = img.resize((828, 1472), Image.LANCZOS)
     small.save(path, "PNG")
     small.close()
@@ -641,23 +707,27 @@ def _render_job(job_id, payload, bed, scene_secs):
     workdir = tempfile.mkdtemp(prefix=f"story_{job_id}_")
     try:
         title = payload["title"].strip()
-        kicker = (payload.get("kicker") or "NIGERIAN FOLKTALE").strip()
-        cta = (payload.get("cta") or "Follow Trend Radar NG for more stories.").strip()
-        # lane identity: any lane on this renderer can carry its own masthead and tagline.
-        # Omitted -> the Heritage defaults, so existing callers are untouched.
+        # lane identity: a lane carries its own brand (colours, masthead, tagline,
+        # hashtag) and may still override any single string. No brand -> trng, so
+        # existing callers are untouched.
+        brand_name = (payload.get("brand") or "").strip().lower() or DEFAULT_BRAND
+        b = _brand(brand_name)
+        kicker = (payload.get("kicker") or b["kicker"]).strip()
+        cta = (payload.get("cta") or b["cta"]).strip()
         masthead = (payload.get("masthead") or "").strip() or None
         tagline = (payload.get("tagline") or "").strip() or None
+        hashtag = (payload.get("hashtag") or "").strip() or None
         scenes = payload["scenes"]
         stamp = f"{time.time():.6f}".replace(".", "")   # microsecond-precision names
         frames = [os.path.join(workdir, f"f{stamp}_00_title.png")]
-        render_title_frame(frames[0], title, kicker, masthead, tagline)
+        render_title_frame(frames[0], title, kicker, masthead, tagline, brand_name)
         for i, s in enumerate(scenes, start=1):
             fp = os.path.join(workdir, f"f{stamp}_{i:02d}_scene.png")
             render_scene_frame(fp, s["text"].strip(), i, len(scenes), s.get("label"),
-                               masthead, tagline)
+                               masthead, tagline, brand_name)
             frames.append(fp)
         cta_fp = os.path.join(workdir, f"f{stamp}_{len(scenes) + 1:02d}_cta.png")
-        render_cta_frame(cta_fp, title, cta, masthead, tagline)
+        render_cta_frame(cta_fp, title, cta, masthead, tagline, brand_name, hashtag)
         frames.append(cta_fp)
 
         import gc
@@ -671,7 +741,7 @@ def _render_job(job_id, payload, bed, scene_secs):
         clip_secs = None
         narr_files = None
         long_scenes = []
-        cfg = _tts_cfg(title)
+        cfg = _tts_cfg(title, payload.get("voice"))
         want_narration = payload.get("narration", _tts_ready(cfg))
         narr_error = None
         if want_narration and _tts_ready(cfg):
@@ -718,12 +788,12 @@ def _render_job(job_id, payload, bed, scene_secs):
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", path=out_path, duration=round(total, 2),
                                 narrated=bool(narr_files), voice=(cfg["voice"] if narr_files else None),
-                                narration_error=narr_err_final,
+                                brand=brand_name, narration_error=narr_err_final,
                                 long_scenes=(long_scenes if narr_files else []))
         _write_status(job_id, status="done", bed=os.path.basename(bed),
                       duration=round(total, 2), narrated=bool(narr_files),
                       voice=(cfg["voice"] if narr_files else None),
-                      narration_error=narr_err_final,
+                      brand=brand_name, narration_error=narr_err_final,
                       long_scenes=(long_scenes if narr_files else []))
     except Exception as exc:                            # noqa: BLE001
         with JOBS_LOCK:
@@ -764,6 +834,7 @@ def story_status(job_id):
             meta = {"status": "done", "path": mp4,
                     "duration": disk.get("duration"), "bed": disk.get("bed"),
                     "narrated": disk.get("narrated", False), "voice": disk.get("voice"),
+                    "brand": disk.get("brand"),
                     "narration_error": disk.get("narration_error"),
                     "long_scenes": disk.get("long_scenes") or []}
             with JOBS_LOCK:
@@ -785,6 +856,7 @@ def story_status(job_id):
         body["bed"] = meta.get("bed")
         body["narrated"] = meta.get("narrated", False)
         body["voice"] = meta.get("voice")
+        body["brand"] = meta.get("brand")
         if meta.get("narration_error"):
             body["narration_error"] = meta["narration_error"]
         if meta.get("long_scenes"):
@@ -828,6 +900,7 @@ def story_health():
                  "provider": "off"}
     return jsonify({
         "narration": narration,
+        "brands": sorted(BRANDS),
         "status": "ok" if not problems else "degraded",
         "ffmpeg": "unavailable — check requirements.txt (imageio-ffmpeg)" if any("ffmpeg" in p for p in problems) else "bundled (imageio-ffmpeg)",
         "audio_beds": beds,
