@@ -47,6 +47,8 @@ POST /brief/render     -> Naija Daily Brief card (JSON: hosted url; static/brief
 GET  /postara/health   -> PostaraTrend Autopilot lanes health check (added Jul 2026)
 POST /receipts/render  -> Autopilot Receipts card (JSON: hosted url; static/postara/)
 POST /tips/render      -> SMB Tips card (JSON: hosted url; static/postara/)
+GET  /extract/health   -> Role Scout resume extraction health check (added Jul 2026)
+POST /extract          -> Role Scout resume text extraction (JSON: text, pages, scanned flag)
 
 format=jpg (added Jul 2026): the Instagram Content Publishing API only accepts
 JPEG via image_url, while Facebook accepts the PNG cards as-is. Any card route
@@ -165,6 +167,16 @@ pacing without narration; duration follows the voice with narration on;
 180s hard cap. Disk-backed job store with heartbeat (poll stays honest
 across worker restarts). Contraction gate ON (422; possessives pass).
 Route lives in pv_reel_video.py, blueprint pv_reel_bp.
+
+Role Scout resume extraction (added Jul 2026, RS PL 001): POST /extract
+accepts raw docx or pdf bytes (magic byte detection, no filename needed)
+and returns JSON with the plain text plus page facts: kind, pages, chars,
+a scanned flag for PDFs with no usable text layer, and a truncated flag at
+the character cap. Mechanical extraction only, no interpretation; the Role
+Scout parse lane in n8n sends the text to its transcription model
+afterwards. Stateless, no worker memory, lazy imports so missing
+dependencies degrade to a 503 on this route instead of breaking the app.
+Route lives in resume_extract.py, blueprint extract_bp.
 """
 
 from flask import Flask, request, send_file, Response
@@ -200,6 +212,7 @@ from blessing_card import blessing_bp         # DAILY BLESSING (added Jul 2026)
 from story_video import story_bp               # HERITAGE STORY REEL (added Jul 2026)
 from civic_card import civic_bp                # YOUR VOICE 2027 (added Jul 2026)
 from pv_reel_video import pv_reel_bp           # PV EDITION REEL (added Jul 2026)
+from resume_extract import extract_bp          # ROLE SCOUT EXTRACTION (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -222,6 +235,7 @@ app.register_blueprint(blessing_bp)            # DAILY BLESSING (added Jul 2026)
 app.register_blueprint(story_bp)               # HERITAGE STORY REEL (added Jul 2026)
 app.register_blueprint(civic_bp)               # YOUR VOICE 2027 (added Jul 2026)
 app.register_blueprint(pv_reel_bp)             # PV EDITION REEL (added Jul 2026)
+app.register_blueprint(extract_bp)             # ROLE SCOUT EXTRACTION (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
