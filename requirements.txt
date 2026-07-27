@@ -3,3 +3,5 @@ gunicorn
 Pillow
 numpy
 requests
+python-docx
+pypdf
