@@ -49,6 +49,8 @@ POST /receipts/render  -> Autopilot Receipts card (JSON: hosted url; static/post
 POST /tips/render      -> SMB Tips card (JSON: hosted url; static/postara/)
 GET  /extract/health   -> Role Scout resume extraction health check (added Jul 2026)
 POST /extract          -> Role Scout resume text extraction (JSON: text, pages, scanned flag)
+GET  /export/resume/health -> Role Scout resume export health check (added Jul 2026)
+POST /export/resume    -> Role Scout tailored resume export (binary PDF or Word download)
 
 format=jpg (added Jul 2026): the Instagram Content Publishing API only accepts
 JPEG via image_url, while Facebook accepts the PNG cards as-is. Any card route
@@ -177,6 +179,19 @@ Scout parse lane in n8n sends the text to its transcription model
 afterwards. Stateless, no worker memory, lazy imports so missing
 dependencies degrade to a 503 on this route instead of breaking the app.
 Route lives in resume_extract.py, blueprint extract_bp.
+
+Role Scout resume export (added Jul 2026, verification link build): POST
+/export/resume accepts the verified tailored document as JSON (seeker
+name, contact lines, posting header, sections of lines, verification
+facts) and returns a downloadable PDF or Word binary. Output is ATS
+shaped: one column, standard fonts, plain uppercase headings, no tables
+and no graphics. A quiet verification footer renders only when the
+caller sends both verified_at and attested_version. The route answers
+CORS preflights because the Role Scout app calls it from the browser.
+Content arrives already verified by the tailor lane, so rendering is
+mechanical with no content gates. Lazy imports degrade a missing
+dependency to a 503 on this route only. Stateless, no worker memory.
+Route lives in resume_export.py, blueprint export_bp.
 """
 
 from flask import Flask, request, send_file, Response
@@ -213,6 +228,7 @@ from story_video import story_bp               # HERITAGE STORY REEL (added Jul 
 from civic_card import civic_bp                # YOUR VOICE 2027 (added Jul 2026)
 from pv_reel_video import pv_reel_bp           # PV EDITION REEL (added Jul 2026)
 from resume_extract import extract_bp          # ROLE SCOUT EXTRACTION (added Jul 2026)
+from resume_export import export_bp            # ROLE SCOUT EXPORT (added Jul 2026)
 app.register_blueprint(newsstand_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(wahala_bp)
@@ -236,6 +252,7 @@ app.register_blueprint(story_bp)               # HERITAGE STORY REEL (added Jul 
 app.register_blueprint(civic_bp)               # YOUR VOICE 2027 (added Jul 2026)
 app.register_blueprint(pv_reel_bp)             # PV EDITION REEL (added Jul 2026)
 app.register_blueprint(extract_bp)             # ROLE SCOUT EXTRACTION (added Jul 2026)
+app.register_blueprint(export_bp)              # ROLE SCOUT EXPORT (added Jul 2026)
 
 MAX_HEADLINE = 240
 ALLOWED = {"POLITICS", "ENTERTAINMENT", "EPL", "FOOTBALL", "ECONOMY", "GOSPEL", "DIASPORA", "TECH"}
