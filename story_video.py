@@ -60,6 +60,13 @@ GOLD_DIM = (240, 180, 41, 90)
 CREAM = (244, 239, 228)
 GREY = (168, 172, 180)
 
+# picture-led background (opt-in via payload "bg_image"). Absent -> frames render
+# exactly as before. Present -> the photo is cover-fit, mildly desaturated for
+# series cohesion, and darkened so the cream body text stays legible.
+BG_SCRIM = 0.55       # global black overlay strength over the photo (higher = darker)
+BG_DESAT = 0.25       # blend toward greyscale for cohesion (0 = keep full colour)
+BG_EDGE_SCRIM = 120   # extra top/bottom darkening 0-255 to seat masthead + footer
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIO_DIR = os.path.join(BASE_DIR, "audio")
 JOB_DIR = os.path.join(tempfile.gettempdir(), "trng_story_jobs")
@@ -444,18 +451,78 @@ def _glow(img, cx, cy, radius, color, peak=46):
     img.paste(Image.composite(overlay, img, glow), (0, 0))
 
 
-def _base_frame(b=None):
+def _load_bg(path):
+    """Prepare one photographic background for a whole episode: cover-fit to the
+    frame, mildly desaturate for series cohesion, then darken with a global scrim
+    plus a top/bottom gradient so the masthead, footer and cream body text stay
+    legible. Returns a FRAME-sized RGB image, or None if the file cannot be read
+    (a missing picture must never fail a render). Intermediates are closed as they
+    go, so only one frame-sized image survives the call: the 512MB box holds one,
+    not a stack."""
+    try:
+        src = Image.open(path)
+        src.load()
+        src = src.convert("RGB")
+    except Exception:                                   # noqa: BLE001
+        return None
+    tw, th = FRAME_W, FRAME_H
+    sw, sh = src.size
+    scale = max(tw / sw, th / sh)
+    nw, nh = max(int(sw * scale + 0.5), tw), max(int(sh * scale + 0.5), th)
+    resized = src.resize((nw, nh), Image.LANCZOS)
+    src.close()
+    left, top = (nw - tw) // 2, (nh - th) // 2
+    base = resized.crop((left, top, left + tw, top + th))
+    resized.close()
+    if BG_DESAT > 0:                                    # unify colour across the set
+        gray = base.convert("L").convert("RGB")
+        blended = Image.blend(base, gray, BG_DESAT)
+        base.close()
+        gray.close()
+        base = blended
+    black = Image.new("RGB", (tw, th), (0, 0, 0))
+    dark = Image.blend(base, black, BG_SCRIM)           # global darken
+    base.close()
+    if BG_EDGE_SCRIM > 0:                               # seat masthead (top) + footer (bottom)
+        scrim = Image.new("L", (tw, th), 0)
+        sd = ImageDraw.Draw(scrim)
+        for y in range(th):
+            t = y / th
+            a = 0
+            if t < 0.30:
+                a = int(BG_EDGE_SCRIM * (1 - t / 0.30))
+            elif t > 0.68:
+                a = int(BG_EDGE_SCRIM * ((t - 0.68) / 0.32))
+            if a:
+                sd.line([(0, y), (tw, y)], fill=a)
+        composited = Image.composite(black, dark, scrim)
+        dark.close()
+        scrim.close()
+        dark = composited
+    black.close()
+    return dark
+
+
+def _base_frame(b=None, bg=None):
     b = b or _brand()
-    ink, lift, accent = b["ink"], b["ink_lift"], b["accent"]
-    img = Image.new("RGB", (FRAME_W, FRAME_H), ink)
-    d = ImageDraw.Draw(img)
-    for y in range(FRAME_H):                       # subtle vertical lift
-        if y % 3 == 0:
-            t = y / FRAME_H
-            c = tuple(int(ink[i] + (lift[i] - ink[i]) * (1 - abs(t - 0.35) * 1.6)) for i in range(3))
-            d.line([(0, y), (FRAME_W, y)], fill=c)
-    _glow(img, FRAME_W // 2, int(FRAME_H * 0.34), int(FRAME_W * 0.62), accent, peak=26)
-    d = ImageDraw.Draw(img)
+    accent = b["accent"]
+    if bg is not None:
+        # picture-led: the darkened photo IS the background. Skip the ink gradient
+        # and the accent glow (both fight a photograph); keep the corner ornaments
+        # so brand identity survives on top of the image.
+        img = bg.copy()
+        d = ImageDraw.Draw(img)
+    else:
+        ink, lift = b["ink"], b["ink_lift"]
+        img = Image.new("RGB", (FRAME_W, FRAME_H), ink)
+        d = ImageDraw.Draw(img)
+        for y in range(FRAME_H):                       # subtle vertical lift
+            if y % 3 == 0:
+                t = y / FRAME_H
+                c = tuple(int(ink[i] + (lift[i] - ink[i]) * (1 - abs(t - 0.35) * 1.6)) for i in range(3))
+                d.line([(0, y), (FRAME_W, y)], fill=c)
+        _glow(img, FRAME_W // 2, int(FRAME_H * 0.34), int(FRAME_W * 0.62), accent, peak=26)
+        d = ImageDraw.Draw(img)
     # corner ornaments in the brand accent
     m, L, wpx = 84, 150, 5
     for cx, cy, dx, dy in [(m, m, 1, 1), (FRAME_W - m, m, -1, 1),
@@ -497,9 +564,10 @@ def _footer(d, text, b=None):
     d.text(((FRAME_W - tw) / 2, FRAME_H - 220), text, font=f, fill=b["muted"])
 
 
-def render_title_frame(path, title, kicker, masthead=None, tagline=None, brand=None):
+def render_title_frame(path, title, kicker, masthead=None, tagline=None, brand=None,
+                       bg=None):
     b = _brand(brand)
-    img, d = _base_frame(b)
+    img, d = _base_frame(b, bg)
     _masthead(d, masthead, b)
     _chip(d, 560, kicker.upper(), b)
     f, lines, lh = _fit_serif(d, title, FRAME_W - 320, 760, start=128, floor=64)
@@ -516,9 +584,9 @@ def render_title_frame(path, title, kicker, masthead=None, tagline=None, brand=N
 
 
 def render_scene_frame(path, text, idx, total, label=None, masthead=None, tagline=None,
-                       brand=None):
+                       brand=None, bg=None):
     b = _brand(brand)
-    img, d = _base_frame(b)
+    img, d = _base_frame(b, bg)
     _masthead(d, masthead, b)
     lab = (label or f"SCENE {idx}").upper()
     fl = _font(36, serif=False, bold=True)
@@ -543,9 +611,9 @@ def render_scene_frame(path, text, idx, total, label=None, masthead=None, taglin
 
 
 def render_cta_frame(path, title, cta, masthead=None, tagline=None, brand=None,
-                     hashtag=None):
+                     hashtag=None, bg=None):
     b = _brand(brand)
-    img, d = _base_frame(b)
+    img, d = _base_frame(b, bg)
     _masthead(d, masthead, b)
     ft = _font(46, serif=True, bold=True)
     d.text(((FRAME_W - d.textlength(title, font=ft)) / 2, 620), title, font=ft, fill=b["muted"])
@@ -718,18 +786,32 @@ def _render_job(job_id, payload, bed, scene_secs):
         tagline = (payload.get("tagline") or "").strip() or None
         hashtag = (payload.get("hashtag") or "").strip() or None
         scenes = payload["scenes"]
+        # picture-led background: one photo per episode, shared by every frame.
+        # Absent or unreadable -> the classic solid frame, and the reason is
+        # surfaced in status as bg_image_error (a missing picture never fails a render).
+        bg_ref = (payload.get("bg_image") or "").strip()
+        bg = None
+        bg_image_error = None
+        if bg_ref:
+            bg_path = bg_ref if os.path.isabs(bg_ref) else os.path.join(BASE_DIR, bg_ref)
+            bg = _load_bg(bg_path)
+            if bg is None:
+                bg_image_error = f"bg_image not loadable: {bg_ref}"
         stamp = f"{time.time():.6f}".replace(".", "")   # microsecond-precision names
         frames = [os.path.join(workdir, f"f{stamp}_00_title.png")]
-        render_title_frame(frames[0], title, kicker, masthead, tagline, brand_name)
+        render_title_frame(frames[0], title, kicker, masthead, tagline, brand_name, bg=bg)
         for i, s in enumerate(scenes, start=1):
             fp = os.path.join(workdir, f"f{stamp}_{i:02d}_scene.png")
             render_scene_frame(fp, s["text"].strip(), i, len(scenes), s.get("label"),
-                               masthead, tagline, brand_name)
+                               masthead, tagline, brand_name, bg=bg)
             frames.append(fp)
         cta_fp = os.path.join(workdir, f"f{stamp}_{len(scenes) + 1:02d}_cta.png")
-        render_cta_frame(cta_fp, title, cta, masthead, tagline, brand_name, hashtag)
+        render_cta_frame(cta_fp, title, cta, masthead, tagline, brand_name, hashtag, bg=bg)
         frames.append(cta_fp)
 
+        if bg is not None:
+            bg.close()                                  # release the shared photo before the encode
+        pictured = bool(bg_ref) and bg_image_error is None
         import gc
         gc.collect()                                    # frame-stage intermediates go now
         out_path = os.path.join(JOB_DIR, f"{job_id}.mp4")
@@ -789,12 +871,14 @@ def _render_job(job_id, payload, bed, scene_secs):
             JOBS[job_id].update(status="done", path=out_path, duration=round(total, 2),
                                 narrated=bool(narr_files), voice=(cfg["voice"] if narr_files else None),
                                 brand=brand_name, narration_error=narr_err_final,
-                                long_scenes=(long_scenes if narr_files else []))
+                                long_scenes=(long_scenes if narr_files else []),
+                                pictured=pictured, bg_image_error=bg_image_error)
         _write_status(job_id, status="done", bed=os.path.basename(bed),
                       duration=round(total, 2), narrated=bool(narr_files),
                       voice=(cfg["voice"] if narr_files else None),
                       brand=brand_name, narration_error=narr_err_final,
-                      long_scenes=(long_scenes if narr_files else []))
+                      long_scenes=(long_scenes if narr_files else []),
+                      pictured=pictured, bg_image_error=bg_image_error)
     except Exception as exc:                            # noqa: BLE001
         with JOBS_LOCK:
             JOBS[job_id].update(status="error", error=str(exc)[:800])
@@ -836,7 +920,9 @@ def story_status(job_id):
                     "narrated": disk.get("narrated", False), "voice": disk.get("voice"),
                     "brand": disk.get("brand"),
                     "narration_error": disk.get("narration_error"),
-                    "long_scenes": disk.get("long_scenes") or []}
+                    "long_scenes": disk.get("long_scenes") or [],
+                    "pictured": disk.get("pictured", False),
+                    "bg_image_error": disk.get("bg_image_error")}
             with JOBS_LOCK:
                 JOBS[job_id] = {**meta, "created": time.time()}
         elif disk and disk.get("status") == "error":
@@ -857,6 +943,9 @@ def story_status(job_id):
         body["narrated"] = meta.get("narrated", False)
         body["voice"] = meta.get("voice")
         body["brand"] = meta.get("brand")
+        body["pictured"] = meta.get("pictured", False)
+        if meta.get("bg_image_error"):
+            body["bg_image_error"] = meta["bg_image_error"]
         if meta.get("narration_error"):
             body["narration_error"] = meta["narration_error"]
         if meta.get("long_scenes"):
