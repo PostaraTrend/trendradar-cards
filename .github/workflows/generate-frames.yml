@@ -1,0 +1,59 @@
+name: Generate serial frames
+
+# Run this by hand from the Actions tab (Run workflow). It generates the serial's
+# frames through the Leonardo API and commits them to assets/serial/<serial>/.
+on:
+  workflow_dispatch:
+    inputs:
+      serial:
+        description: "Serial slug (folder under serials/)"
+        required: true
+        default: "blood-money"
+      force:
+        description: "Regenerate frames that already exist"
+        type: boolean
+        required: false
+        default: false
+      only:
+        description: "Only these episode numbers, comma separated (blank = all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write        # lets the built-in token commit the frames back
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Generate frames
+        env:
+          LEONARDO_API_KEY: ${{ secrets.LEONARDO_API_KEY }}
+        run: |
+          python tools/generate_frames.py \
+            --serial "${{ github.event.inputs.serial }}" \
+            ${{ github.event.inputs.force == 'true' && '--force' || '' }} \
+            ${{ github.event.inputs.only != '' && format('--only {0}', github.event.inputs.only) || '' }}
+
+      - name: Commit new frames
+        run: |
+          git config user.name "frame-generator[bot]"
+          git config user.email "frame-generator@users.noreply.github.com"
+          git add assets/serial/
+          if git diff --cached --quiet; then
+            echo "No new frames to commit."
+          else
+            git commit -m "Generate frames for ${{ github.event.inputs.serial }}"
+            git push
+          fi
