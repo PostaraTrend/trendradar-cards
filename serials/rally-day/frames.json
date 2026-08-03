@@ -1,0 +1,105 @@
+{
+  "config": {
+    "_comment": "Fill modelId and styleUUID from Leonardo Get API Code on a liked frame for exact match with Blood Money's grade.",
+    "modelId": "aa77f04e-3eec-4034-9c07-d0f619684628",
+    "styleUUID": null,
+    "width": 832,
+    "height": 1472,
+    "num_images": 1,
+    "contrast": 3.5,
+    "alchemy": false,
+    "ultra": false
+  },
+  "frames": [
+    {
+      "episode_no": 1,
+      "filename": "ep01.jpg",
+      "prompt": "A smartphone lying face up on a car seat in a dark car park, the voice memo screen lit and running, a faint red recording dot glowing. Cold interior car light, everything else deep shadow, tense and accidental. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, legible text, letters, watermark, logo, cartoon, illustration, oversaturated, bright cheerful lighting, daylight, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 2,
+      "filename": "ep02.jpg",
+      "prompt": "A torn campaign rally poster taped to a cracked wall, a date circled in red marker, the poster peeling at one corner. Flat harsh daylight, ordinary and quietly menacing, the clock made visible. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, watermark, logo, legible slogan text, cartoon, illustration, oversaturated, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 3,
+      "filename": "ep03.jpg",
+      "prompt": "A small dome security camera mounted above a car park entrance, freshly repaired, a thin new cable still hanging loose beside it, dusk light behind it. Cold, watching, deliberate. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, watermark, logo, legible text, cartoon, illustration, oversaturated, bright cheerful lighting, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 4,
+      "filename": "ep04.jpg",
+      "prompt": "A folded scrap of paper with a handwritten list half visible, resting on a car dashboard beside a set of keys, dim evening light through a windscreen. Furtive, ordinary objects made ominous. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, watermark, logo, typed printed text, modern typography, cartoon, illustration, oversaturated, bright cheerful lighting, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 5,
+      "filename": "ep05.jpg",
+      "prompt": "A large stadium seen from high in the stands, completely empty, a single work light on down on the pitch, days before the event. Vast, quiet, waiting, cold blue dusk light. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, crowd, watermark, logo, brand names, cartoon, illustration, oversaturated, bright sunny daylight, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 6,
+      "filename": "ep06.jpg",
+      "prompt": "A woman's hand resting gently on a rounded pregnant belly under a soft blouse, seen from below the chin so no face is visible, warm lamplight, a bedroom at night. Tender, and quietly at risk. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "face, visible face, portrait, eyes, watermark, logo, cartoon, illustration, oversaturated, bright cheerful lighting, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 7,
+      "filename": "ep07.jpg",
+      "prompt": "A small quiet corner cafe table with two cups of coffee, one half finished, a folded notebook beside them, seen from an empty angle with no one seated. Low warm light, secretive and still. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, watermark, logo, legible text, cartoon, illustration, oversaturated, bright cheerful lighting, busy crowded cafe, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 8,
+      "filename": "ep08.jpg",
+      "prompt": "A thick envelope of banknotes resting on a polished office desk beside a glass of untouched whisky, one warm lamp light, deep shadow around the edges. Expensive, seductive, and a test. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, legible text, watermark, logo, signature, cartoon, illustration, oversaturated, bright cheerful lighting, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 9,
+      "filename": "ep09.jpg",
+      "prompt": "An old car radio glowing on a dashboard at night, dial lit amber, a single knob catching the light, the rest of the car dark. Warm but wrong, a lie being broadcast softly. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, watermark, logo, legible text, cartoon, illustration, oversaturated, bright cheerful lighting, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 10,
+      "filename": "ep10.jpg",
+      "prompt": "A simple funeral wreath of white flowers resting against a plain wall, a ribbon with no legible text, soft grey overcast light. Quiet, cold, a warning dressed as sympathy. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, legible text, readable ribbon, watermark, logo, cartoon, illustration, oversaturated, bright cheerful lighting, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 11,
+      "filename": "ep11.jpg",
+      "prompt": "Woven market shopping bags set down on a stall counter beside stacked tomatoes, a long shadow of someone standing just out of frame falling across them, late afternoon market light. Ordinary life, quietly watched. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, watermark, logo, legible text, cartoon, illustration, oversaturated, cluttered market chaos, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 12,
+      "filename": "ep12.jpg",
+      "prompt": "A police officer's peaked cap resting on a plain wooden table beside a folded uniform jacket, single window light, a small room, humble and worn. Honest, isolated, ready. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, badge text, legible text, watermark, logo, cartoon, illustration, oversaturated, bright cheerful lighting, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 13,
+      "filename": "ep13.jpg",
+      "prompt": "A small handheld voice recorder and a spiral notebook side by side on a cluttered desk under a desk lamp, papers fanned beneath them, night, focused and urgent. A journalist's tools, no one present. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, legible text, readable handwriting, watermark, logo, cartoon, illustration, oversaturated, bright cheerful lighting, cluttered chaos, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 14,
+      "filename": "ep14.jpg",
+      "prompt": "A small travel bag packed and zipped, sitting by a front door in pre dawn blue light, a pair of shoes placed neatly beside it. Quiet resolve, the last hour before a decision. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "people, face, portrait, hands, watermark, logo, legible text, cartoon, illustration, oversaturated, bright daylight, cluttered, low quality, blurry, distorted"
+    },
+    {
+      "episode_no": 15,
+      "filename": "ep15.jpg",
+      "prompt": "A packed stadium seen from very high above, a sea of small distant figures and colour, no individual face visible, bright midday light, the crowd from the same seats that stood empty before. Vast, alive, and unaware. Desaturated cinematic colour grade, crushed shadows, subtle film grain, moody, photographic, high detail. Vertical portrait composition 9:16.",
+      "negative_prompt": "close up face, portrait, individual person, watermark, logo, brand names, legible text, cartoon, illustration, low quality, blurry, distorted"
+    }
+  ]
+}
