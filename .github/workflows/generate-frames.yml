@@ -8,7 +8,7 @@ on:
       serial:
         description: "Serial slug (folder under serials/)"
         required: true
-        default: "blood-money"
+        default: "rally-day"
       force:
         description: "Regenerate frames that already exist"
         type: boolean
