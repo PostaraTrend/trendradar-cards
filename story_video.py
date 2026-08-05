@@ -63,9 +63,10 @@ GREY = (168, 172, 180)
 # picture-led background (opt-in via payload "bg_image"). Absent -> frames render
 # exactly as before. Present -> the photo is cover-fit, mildly desaturated for
 # series cohesion, and darkened so the cream body text stays legible.
-BG_SCRIM = 0.55       # global black overlay strength over the photo (higher = darker)
-BG_DESAT = 0.25       # blend toward greyscale for cohesion (0 = keep full colour)
+BG_SCRIM = 0.32       # global black overlay strength over the photo (higher = darker)
+BG_DESAT = 0.08       # blend toward greyscale for cohesion (0 = keep full colour)
 BG_EDGE_SCRIM = 120   # extra top/bottom darkening 0-255 to seat masthead + footer
+BG_TEXT_PLATE = 168   # localised darkening 0-255 behind lower-third body text
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIO_DIR = os.path.join(BASE_DIR, "audio")
@@ -589,6 +590,32 @@ def render_title_frame(path, title, kicker, masthead=None, tagline=None, brand=N
     img.close()
 
 
+def _text_plate(img, top, bottom, strength=None):
+    """Darken just the band the body text sits in, so the picture above it can
+    stay bright. Feathered at both edges so there is no visible hard band."""
+    if strength is None:
+        strength = BG_TEXT_PLATE
+    if strength <= 0 or bottom <= top:
+        return
+    w, h = img.size
+    top = max(0, int(top)); bottom = min(h, int(bottom))
+    feather = max(1, int((bottom - top) * 0.22))
+    mask = Image.new("L", (w, h), 0)
+    md = ImageDraw.Draw(mask)
+    for y in range(top, bottom):
+        if y < top + feather:
+            a = strength * (y - top) / feather
+        elif y > bottom - feather:
+            a = strength * (bottom - y) / feather
+        else:
+            a = strength
+        md.line([(0, y), (w, y)], fill=int(a))
+    black = Image.new("RGB", (w, h), (0, 0, 0))
+    img.paste(Image.composite(black, img, mask), (0, 0))
+    mask.close()
+    black.close()
+
+
 def render_scene_frame(path, text, idx, total, label=None, masthead=None, tagline=None,
                        brand=None, bg=None):
     b = _brand(brand)
@@ -596,9 +623,25 @@ def render_scene_frame(path, text, idx, total, label=None, masthead=None, taglin
     _masthead(d, masthead, b)
     lab = (label or f"SCENE {idx}").upper()
     fl = _font(36, serif=False, bold=True)
-    _letterspaced(d, (0, 520), lab, fl, b["accent"], tracking=7, anchor_center_w=FRAME_W)
-    f, lines, lh = _fit_serif(d, text, FRAME_W - 300, 1000, start=92, floor=54, bold=False, spacing=1.42)
-    y = (FRAME_H - len(lines) * lh) // 2
+    if bg is not None:
+        # PICTURE MODE: the artwork is the point, so the words get out of its way.
+        # Type is smaller, set wider, and seated in the lower third above the
+        # progress dots, with a feathered plate behind it for legibility. The top
+        # half of the illustration stays clear and bright.
+        f, lines, lh = _fit_serif(d, text, FRAME_W - 170, 590,
+                                  start=58, floor=34, bold=False, spacing=1.30)
+        block_h = len(lines) * lh
+        bottom = FRAME_H - 400                      # clear of the dots at FRAME_H-330
+        y = bottom - block_h
+        _text_plate(img, y - 120, bottom + 60)
+        d = ImageDraw.Draw(img)                     # plate was pasted, refresh the draw
+        _letterspaced(d, (0, y - 78), lab, fl, b["accent"], tracking=7,
+                      anchor_center_w=FRAME_W)
+    else:
+        _letterspaced(d, (0, 520), lab, fl, b["accent"], tracking=7, anchor_center_w=FRAME_W)
+        f, lines, lh = _fit_serif(d, text, FRAME_W - 300, 1000, start=92, floor=54,
+                                  bold=False, spacing=1.42)
+        y = (FRAME_H - len(lines) * lh) // 2
     for line in lines:
         d.text(((FRAME_W - d.textlength(line, font=f)) / 2, y), line, font=f, fill=b["body"])
         y += lh
