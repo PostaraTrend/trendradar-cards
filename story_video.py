@@ -362,6 +362,12 @@ def validate_payload(p):
         if not t:
             errors.append(f"scenes[{i}].text is required")
         texts.append(t)
+        # optional per-scene picture: a repo-relative or absolute path. Type is
+        # checked here; a path that does not resolve is a soft failure at render
+        # time (reported in status), never a 422 — same contract as bg_image.
+        if isinstance(s, dict) and s.get("image") is not None:
+            if not isinstance(s.get("image"), str):
+                errors.append(f"scenes[{i}].image must be a string path")
     hits = sorted({h for t in texts for h in find_contractions(t)})
     if hits:
         errors.append("contractions not allowed: " + ", ".join(hits))
@@ -786,9 +792,13 @@ def _render_job(job_id, payload, bed, scene_secs):
         tagline = (payload.get("tagline") or "").strip() or None
         hashtag = (payload.get("hashtag") or "").strip() or None
         scenes = payload["scenes"]
-        # picture-led background: one photo per episode, shared by every frame.
-        # Absent or unreadable -> the classic solid frame, and the reason is
-        # surfaced in status as bg_image_error (a missing picture never fails a render).
+        # picture-led background, two granularities that compose:
+        #   bg_image            -> one photo for the whole episode (original behaviour)
+        #   scenes[i].image     -> a photo for THAT beat, overriding the episode photo
+        #   title_image / cta_image -> optional dedicated opening + closing pictures
+        # Any of them absent or unreadable falls back to the next level down and
+        # finally to the classic solid frame. Every failure is reported in status
+        # (bg_image_error / scene_image_errors) and none of them fails a render.
         bg_ref = (payload.get("bg_image") or "").strip()
         bg = None
         bg_image_error = None
@@ -797,21 +807,52 @@ def _render_job(job_id, payload, bed, scene_secs):
             bg = _load_bg(bg_path)
             if bg is None:
                 bg_image_error = f"bg_image not loadable: {bg_ref}"
+
+        scene_image_errors = []
+        per_frame_used = 0
+
+        def _frame_bg(ref, where):
+            """Resolve one frame's own picture. Returns (image_or_None, is_own).
+            is_own is True only when a dedicated picture loaded, so the caller
+            knows whether it must close the image or leave the shared bg alone.
+            One picture is held at a time: load, draw, release."""
+            ref = (ref or "").strip() if isinstance(ref, str) else ""
+            if not ref:
+                return bg, False
+            path = ref if os.path.isabs(ref) else os.path.join(BASE_DIR, ref)
+            img = _load_bg(path)
+            if img is None:
+                scene_image_errors.append(f"{where}: not loadable: {ref}")
+                return bg, False                        # soft fallback to the episode photo
+            return img, True
+
         stamp = f"{time.time():.6f}".replace(".", "")   # microsecond-precision names
         frames = [os.path.join(workdir, f"f{stamp}_00_title.png")]
-        render_title_frame(frames[0], title, kicker, masthead, tagline, brand_name, bg=bg)
+        t_bg, t_own = _frame_bg(payload.get("title_image"), "title_image")
+        render_title_frame(frames[0], title, kicker, masthead, tagline, brand_name, bg=t_bg)
+        if t_own:
+            per_frame_used += 1
+            t_bg.close()                                # released before the next one loads
         for i, s in enumerate(scenes, start=1):
             fp = os.path.join(workdir, f"f{stamp}_{i:02d}_scene.png")
+            s_bg, s_own = _frame_bg(s.get("image"), f"scenes[{i - 1}].image")
             render_scene_frame(fp, s["text"].strip(), i, len(scenes), s.get("label"),
-                               masthead, tagline, brand_name, bg=bg)
+                               masthead, tagline, brand_name, bg=s_bg)
+            if s_own:
+                per_frame_used += 1
+                s_bg.close()                            # one scene picture in memory at a time
             frames.append(fp)
         cta_fp = os.path.join(workdir, f"f{stamp}_{len(scenes) + 1:02d}_cta.png")
-        render_cta_frame(cta_fp, title, cta, masthead, tagline, brand_name, hashtag, bg=bg)
+        c_bg, c_own = _frame_bg(payload.get("cta_image"), "cta_image")
+        render_cta_frame(cta_fp, title, cta, masthead, tagline, brand_name, hashtag, bg=c_bg)
+        if c_own:
+            per_frame_used += 1
+            c_bg.close()
         frames.append(cta_fp)
 
         if bg is not None:
             bg.close()                                  # release the shared photo before the encode
-        pictured = bool(bg_ref) and bg_image_error is None
+        pictured = (bool(bg_ref) and bg_image_error is None) or per_frame_used > 0
         import gc
         gc.collect()                                    # frame-stage intermediates go now
         out_path = os.path.join(JOB_DIR, f"{job_id}.mp4")
@@ -872,13 +913,15 @@ def _render_job(job_id, payload, bed, scene_secs):
                                 narrated=bool(narr_files), voice=(cfg["voice"] if narr_files else None),
                                 brand=brand_name, narration_error=narr_err_final,
                                 long_scenes=(long_scenes if narr_files else []),
-                                pictured=pictured, bg_image_error=bg_image_error)
+                                pictured=pictured, bg_image_error=bg_image_error,
+                                scene_image_errors=scene_image_errors)
         _write_status(job_id, status="done", bed=os.path.basename(bed),
                       duration=round(total, 2), narrated=bool(narr_files),
                       voice=(cfg["voice"] if narr_files else None),
                       brand=brand_name, narration_error=narr_err_final,
                       long_scenes=(long_scenes if narr_files else []),
-                      pictured=pictured, bg_image_error=bg_image_error)
+                      pictured=pictured, bg_image_error=bg_image_error,
+                      scene_image_errors=scene_image_errors)
     except Exception as exc:                            # noqa: BLE001
         with JOBS_LOCK:
             JOBS[job_id].update(status="error", error=str(exc)[:800])
@@ -922,7 +965,8 @@ def story_status(job_id):
                     "narration_error": disk.get("narration_error"),
                     "long_scenes": disk.get("long_scenes") or [],
                     "pictured": disk.get("pictured", False),
-                    "bg_image_error": disk.get("bg_image_error")}
+                    "bg_image_error": disk.get("bg_image_error"),
+                    "scene_image_errors": disk.get("scene_image_errors") or []}
             with JOBS_LOCK:
                 JOBS[job_id] = {**meta, "created": time.time()}
         elif disk and disk.get("status") == "error":
@@ -946,6 +990,8 @@ def story_status(job_id):
         body["pictured"] = meta.get("pictured", False)
         if meta.get("bg_image_error"):
             body["bg_image_error"] = meta["bg_image_error"]
+        if meta.get("scene_image_errors"):
+            body["scene_image_errors"] = meta["scene_image_errors"]
         if meta.get("narration_error"):
             body["narration_error"] = meta["narration_error"]
         if meta.get("long_scenes"):
