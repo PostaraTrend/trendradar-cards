@@ -458,6 +458,13 @@ def _glow(img, cx, cy, radius, color, peak=46):
     img.paste(Image.composite(overlay, img, glow), (0, 0))
 
 
+def _is_url(ref):
+    """True when a picture reference is an http(s) link rather than a repo path.
+    Lanes that generate their art at run time host it and pass links, so both
+    kinds of reference have to work side by side."""
+    return isinstance(ref, str) and ref.lower().startswith(("http://", "https://"))
+
+
 def _load_bg(path):
     """Prepare one photographic background for a whole episode: cover-fit to the
     frame, mildly desaturate for series cohesion, then darken with a global scrim
@@ -467,7 +474,14 @@ def _load_bg(path):
     go, so only one frame-sized image survives the call: the 512MB box holds one,
     not a stack."""
     try:
-        src = Image.open(path)
+        if _is_url(path):                               # hosted art, fetched once
+            import io                                   # lazy, same style as narration
+            import requests
+            resp = requests.get(path, timeout=30)
+            resp.raise_for_status()
+            src = Image.open(io.BytesIO(resp.content))
+        else:
+            src = Image.open(path)
         src.load()
         src = src.convert("RGB")
     except Exception:                                   # noqa: BLE001
@@ -846,7 +860,8 @@ def _render_job(job_id, payload, bed, scene_secs):
         bg = None
         bg_image_error = None
         if bg_ref:
-            bg_path = bg_ref if os.path.isabs(bg_ref) else os.path.join(BASE_DIR, bg_ref)
+            bg_path = bg_ref if (_is_url(bg_ref) or os.path.isabs(bg_ref)) \
+                else os.path.join(BASE_DIR, bg_ref)
             bg = _load_bg(bg_path)
             if bg is None:
                 bg_image_error = f"bg_image not loadable: {bg_ref}"
@@ -862,7 +877,8 @@ def _render_job(job_id, payload, bed, scene_secs):
             ref = (ref or "").strip() if isinstance(ref, str) else ""
             if not ref:
                 return bg, False
-            path = ref if os.path.isabs(ref) else os.path.join(BASE_DIR, ref)
+            path = ref if (_is_url(ref) or os.path.isabs(ref)) \
+                else os.path.join(BASE_DIR, ref)
             img = _load_bg(path)
             if img is None:
                 scene_image_errors.append(f"{where}: not loadable: {ref}")
@@ -1045,6 +1061,79 @@ def story_status(job_id):
     if meta["status"] == "error":
         body["error"] = meta.get("error")
     return jsonify(body)
+
+
+def _join_job(job_id, parts):
+    """Stitch finished parts into one film. Parts are job ids from this service,
+    or http(s) links to mp4s. Copies streams rather than re-encoding, so a five
+    minute film joins in seconds and loses no quality. Sources are fetched one at
+    a time and released, so the box holds one part, not the whole film."""
+    workdir = tempfile.mkdtemp(prefix="join_", dir=JOB_DIR)
+    local = []
+    try:
+        for i, ref in enumerate(parts):
+            if _is_url(ref):
+                import requests
+                dest = os.path.join(workdir, f"p{i:02d}.mp4")
+                with requests.get(ref, stream=True, timeout=120) as resp:
+                    resp.raise_for_status()
+                    with open(dest, "wb") as fh:
+                        for chunk in resp.iter_content(1 << 20):
+                            fh.write(chunk)
+            else:                                       # a job id from this service
+                with JOBS_LOCK:
+                    meta = JOBS.get(ref)
+                dest = (meta or {}).get("path") or os.path.join(JOB_DIR, f"{ref}.mp4")
+                if not os.path.exists(dest):
+                    raise RuntimeError(f"part not found or expired: {ref}")
+            local.append(dest)
+
+        listing = os.path.join(workdir, "parts.txt")
+        with open(listing, "w", encoding="utf-8") as fh:
+            for path in local:
+                safe = path.replace("'", "'\\''")
+                fh.write(f"file '{safe}'\n")
+
+        out_path = os.path.join(JOB_DIR, f"{job_id}.mp4")
+        _run([_ffmpeg_exe(), "-y", "-f", "concat", "-safe", "0", "-i", listing,
+              "-c", "copy", "-movflags", "+faststart", out_path])
+        total = _audio_duration(out_path) or 0.0
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="done", path=out_path,
+                                duration=round(total, 2), parts=len(local))
+        _write_status(job_id, status="done", path=out_path,
+                      duration=round(total, 2), parts=len(local))
+    except Exception as exc:                            # noqa: BLE001
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="error", error=str(exc)[:800])
+        _write_status(job_id, status="error", error=str(exc)[:800])
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+@story_bp.route("/render/story/join", methods=["POST"])
+def story_join():
+    """Join finished parts into one film. Body: {"parts": [id or url, ...]}.
+    Returns a job id that is polled and fetched exactly like a normal render, so
+    a lane joins with the same wait, check and media steps it already uses."""
+    payload = request.get_json(silent=True) or {}
+    parts = payload.get("parts")
+    if not isinstance(parts, list) or len(parts) < 2:
+        return jsonify({"error": "parts must be a list of at least two job ids or mp4 urls"}), 422
+    if len(parts) > 20:
+        return jsonify({"error": "at most twenty parts per film"}), 422
+    if not all(isinstance(x, str) and x.strip() for x in parts):
+        return jsonify({"error": "every part must be a non empty job id or url"}), 422
+
+    _gc_jobs()
+    job_id = uuid.uuid4().hex[:16]
+    with JOBS_LOCK:
+        JOBS[job_id] = {"status": "joining", "created": time.time(), "path": None,
+                        "parts": len(parts)}
+    _write_status(job_id, status="joining", parts=len(parts))
+    threading.Thread(target=_join_job, args=(job_id, [x.strip() for x in parts]),
+                     daemon=True).start()
+    return jsonify({"id": job_id, "status": "joining", "parts": len(parts)}), 202
 
 
 @story_bp.route("/render/story/media/<job_id>.mp4", methods=["GET"])
