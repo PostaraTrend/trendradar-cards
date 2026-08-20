@@ -104,9 +104,23 @@ def _read_payload(req):
         if not isinstance(sec, dict):
             continue
         title = str(sec.get("title") or "").strip()
-        lines = [str(x).strip() for x in (sec.get("lines") or []) if str(x).strip()]
-        if lines:
-            clean_sections.append({"title": title, "lines": lines})
+        out_lines = []
+        for x in (sec.get("lines") or []):
+            if isinstance(x, dict):
+                txt = str(x.get("text") or "").strip()
+                is_heading = bool(x.get("heading"))
+            else:
+                txt = str(x).strip()
+                is_heading = None
+            if not txt:
+                continue
+            stripped = _re.sub(r"^[\u2022\u2023\u25E6\u2043\-\*]\s+", "", txt)
+            had_bullet = stripped != txt
+            if is_heading is None:
+                is_heading = not had_bullet
+            out_lines.append({"text": stripped, "heading": is_heading})
+        if out_lines:
+            clean_sections.append({"title": title, "lines": out_lines})
     if not clean_sections:
         return None, _err("sections contained no usable lines", 422)
 
@@ -147,25 +161,27 @@ def _render_pdf(payload):
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.lib.enums import TA_LEFT
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Paragraph
     from xml.sax.saxutils import escape
 
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter,
                             leftMargin=0.9 * inch, rightMargin=0.9 * inch,
-                            topMargin=0.8 * inch, bottomMargin=0.8 * inch,
-                            title=payload["seeker_name"] or "Tailored Resume")
-    name_style = ParagraphStyle("name", fontName="Helvetica-Bold", fontSize=16,
-                                leading=20, alignment=TA_LEFT)
+                            topMargin=0.7 * inch, bottomMargin=0.7 * inch,
+                            title=payload["seeker_name"] or "Resume")
+    name_style = ParagraphStyle("name", fontName="Helvetica-Bold", fontSize=18,
+                                leading=22, alignment=TA_LEFT, spaceAfter=2)
     contact_style = ParagraphStyle("contact", fontName="Helvetica", fontSize=9.5,
-                                   leading=13)
-    posting_style = ParagraphStyle("posting", fontName="Helvetica-Oblique",
-                                   fontSize=9.5, leading=13)
-    heading_style = ParagraphStyle("heading", fontName="Helvetica-Bold",
-                                   fontSize=11, leading=15, spaceBefore=10,
-                                   spaceAfter=3)
-    body_style = ParagraphStyle("body", fontName="Helvetica", fontSize=10,
-                                leading=14, spaceAfter=2)
+                                   leading=13, spaceAfter=1)
+    section_style = ParagraphStyle("section", fontName="Helvetica-Bold",
+                                   fontSize=11.5, leading=15, spaceBefore=13,
+                                   spaceAfter=4, textColor="#1F2A44")
+    heading_style = ParagraphStyle("subhead", fontName="Helvetica-Bold",
+                                   fontSize=10.5, leading=14, spaceBefore=8,
+                                   spaceAfter=1)
+    bullet_style = ParagraphStyle("bullet", fontName="Helvetica", fontSize=10,
+                                  leading=14, leftIndent=14, bulletIndent=2,
+                                  spaceAfter=2)
     footer_style = ParagraphStyle("footer", fontName="Helvetica", fontSize=8,
                                   leading=11, textColor="#555555", spaceBefore=14)
 
@@ -174,17 +190,15 @@ def _render_pdf(payload):
         story.append(Paragraph(escape(payload["seeker_name"]), name_style))
     for line in payload["contact_lines"]:
         story.append(Paragraph(escape(line), contact_style))
-    posting_bits = [payload["posting_title"], payload["posting_employer"],
-                    payload["posting_location"]]
-    posting_line = ", ".join(b for b in posting_bits if b)
-    if posting_line:
-        story.append(Spacer(1, 4))
-        story.append(Paragraph(escape(posting_line), posting_style))
     for sec in payload["sections"]:
         if sec["title"]:
-            story.append(Paragraph(escape(sec["title"].upper()), heading_style))
-        for line in sec["lines"]:
-            story.append(Paragraph(escape(line), body_style))
+            story.append(Paragraph(escape(sec["title"].upper()), section_style))
+        for item in sec["lines"]:
+            if item["heading"]:
+                story.append(Paragraph(escape(item["text"]), heading_style))
+            else:
+                story.append(Paragraph(escape(item["text"]), bullet_style,
+                                       bulletText=u"\u2022"))
     footer = _footer_line(payload)
     if footer:
         story.append(Paragraph(escape(footer), footer_style))
@@ -202,27 +216,26 @@ def _render_docx(payload):
         p = d.add_paragraph()
         run = p.add_run(payload["seeker_name"])
         run.bold = True
-        run.font.size = Pt(16)
+        run.font.size = Pt(18)
     for line in payload["contact_lines"]:
         p = d.add_paragraph()
         p.add_run(line).font.size = Pt(9.5)
-    posting_bits = [payload["posting_title"], payload["posting_employer"],
-                    payload["posting_location"]]
-    posting_line = ", ".join(b for b in posting_bits if b)
-    if posting_line:
-        p = d.add_paragraph()
-        run = p.add_run(posting_line)
-        run.italic = True
-        run.font.size = Pt(9.5)
     for sec in payload["sections"]:
         if sec["title"]:
             p = d.add_paragraph()
             run = p.add_run(sec["title"].upper())
             run.bold = True
-            run.font.size = Pt(11)
-        for line in sec["lines"]:
-            p = d.add_paragraph()
-            p.add_run(line).font.size = Pt(10)
+            run.font.size = Pt(11.5)
+            run.font.color.rgb = RGBColor(0x1F, 0x2A, 0x44)
+        for item in sec["lines"]:
+            if item["heading"]:
+                p = d.add_paragraph()
+                run = p.add_run(item["text"])
+                run.bold = True
+                run.font.size = Pt(10.5)
+            else:
+                p = d.add_paragraph(style="List Bullet")
+                p.add_run(item["text"]).font.size = Pt(10)
     footer = _footer_line(payload)
     if footer:
         p = d.add_paragraph()
