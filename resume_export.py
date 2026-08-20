@@ -116,6 +116,14 @@ def _read_payload(req):
                 continue
             stripped = _re.sub(r"^[\u2022\u2023\u25E6\u2043\-\*]\s+", "", txt)
             out_lines.append({"text": stripped, "heading": is_heading})
+        # promote an employer line: a non heading line directly above a role or date
+        # heading that is not a full sentence, so employers render as sub headings not bullets
+        orig_flags = [ln["heading"] for ln in out_lines]
+        for _i in range(len(out_lines) - 1):
+            if not orig_flags[_i] and orig_flags[_i + 1]:
+                _t = out_lines[_i]["text"].rstrip()
+                if _t and _t[-1] not in ".!?":
+                    out_lines[_i]["heading"] = True
         if out_lines:
             clean_sections.append({"title": title, "lines": out_lines})
     if not clean_sections:
