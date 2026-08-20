@@ -111,13 +111,10 @@ def _read_payload(req):
                 is_heading = bool(x.get("heading"))
             else:
                 txt = str(x).strip()
-                is_heading = None
+                is_heading = False
             if not txt:
                 continue
             stripped = _re.sub(r"^[\u2022\u2023\u25E6\u2043\-\*]\s+", "", txt)
-            had_bullet = stripped != txt
-            if is_heading is None:
-                is_heading = not had_bullet
             out_lines.append({"text": stripped, "heading": is_heading})
         if out_lines:
             clean_sections.append({"title": title, "lines": out_lines})
