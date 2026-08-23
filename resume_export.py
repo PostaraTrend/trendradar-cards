@@ -104,6 +104,10 @@ def _read_payload(req):
         if not isinstance(sec, dict):
             continue
         title = str(sec.get("title") or "").strip()
+        # The internal OTHER category is a catch all, never a real heading.
+        # Blank it so those lines render with no section label to the employer.
+        if title.upper() == "OTHER":
+            title = ""
         out_lines = []
         for x in (sec.get("lines") or []):
             if isinstance(x, dict):
@@ -256,7 +260,7 @@ def _render_docx(payload):
 @export_bp.route("/export/resume/health", methods=["GET"])
 def export_health():
     body = {"ok": True, "pdf": _pdf_ready(), "docx": _docx_ready(),
-            "version": "v1.0"}
+            "version": "v1.1"}
     return Response(_json.dumps(body), mimetype="application/json")
 
 
