@@ -7,6 +7,14 @@ POST /extract/check    -> public readability check for the free resume
                           check page: facts only, never the text (added
                           Aug 2026, SOP-016 CP-016-02)
 
+v1.2 (Aug 27 2026, SOP-016 CP-016-08): LinkedIn data export ZIPs are read
+too. A ZIP that holds word/document.xml is a Word file as before; a ZIP
+that holds Profile.csv or Positions.csv is a LinkedIn export and is turned
+into resume shaped text (CONTACT, SUMMARY, EXPERIENCE, EDUCATION, SKILLS,
+CERTIFICATIONS, OTHER) so the parse lane transcribes it unchanged. Birth
+date, maiden name and street address are never carried over. kind is
+"linkedin" on both routes.
+
 Purpose: the parse lane in n8n downloads a stored resume file from
 Supabase storage and posts the raw bytes here. This module performs the
 mechanical step only: bytes to plain text plus page facts. It never
@@ -47,7 +55,7 @@ import threading as _threading
 
 extract_bp = Blueprint("extract", __name__)
 
-EXTRACT_VERSION = "1.1"
+EXTRACT_VERSION = "1.2"
 CHECK_MAX_BYTES = 20 * 1024 * 1024
 CHECK_LIMIT_PER_HOUR = 12
 CHECK_PREVIEW_CHARS = 600
@@ -90,13 +98,176 @@ def _with_check_cors(resp):
     return resp
 
 
+def _zip_kind(data):
+    """A PK archive is either a Word file or a LinkedIn data export."""
+    import io
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = [n.replace("\\", "/").split("/")[-1].lower() for n in zf.namelist()]
+            full = [n.lower() for n in zf.namelist()]
+    except Exception:
+        return "docx"  # let the docx reader report the corruption
+    if any(n.endswith("word/document.xml") for n in full):
+        return "docx"
+    if "profile.csv" in names or "positions.csv" in names:
+        return "linkedin"
+    return "unknown"
+
+
+def _li_rows(zf, wanted):
+    """Rows of one CSV inside the export, matched by file name, as dicts with
+    lower case keys. Missing file or unreadable content gives an empty list."""
+    import csv
+    import io
+    for name in zf.namelist():
+        if name.replace("\\", "/").split("/")[-1].lower() == wanted.lower():
+            try:
+                raw = zf.read(name).decode("utf-8-sig", errors="replace")
+            except Exception:
+                return []
+            lines = raw.splitlines()
+            # Connections.csv starts with a Notes: paragraph and a blank
+            # line before the header; drop that preamble only.
+            if lines and lines[0].strip().lower().startswith("notes:"):
+                while lines and lines[0].strip():
+                    lines.pop(0)
+                while lines and not lines[0].strip():
+                    lines.pop(0)
+            reader = csv.DictReader(io.StringIO("\n".join(lines)))
+            out = []
+            for row in reader:
+                if not row:
+                    continue
+                out.append({(k or "").strip().lower(): (v or "").strip() for k, v in row.items()})
+            return out
+    return []
+
+
+def _li_span(a, b, ongoing="Present"):
+    """(start to end). ongoing is the word used when there is no end date;
+    pass an empty string for things that simply have a date, like a
+    certificate, so it reads (Mar 2022) rather than (Mar 2022 to Present)."""
+    a = (a or "").strip()
+    b = (b or "").strip()
+    if not a and not b:
+        return ""
+    if not b:
+        return "(%s)" % a if not ongoing else "(%s to %s)" % (a, ongoing)
+    return "(%s to %s)" % (a or "Unknown", b)
+
+
+def _extract_linkedin(data):
+    """LinkedIn data export ZIP to resume shaped text, one fact per line,
+    under the section names the parse lane already uses."""
+    import io
+    import zipfile
+    out = []
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        prof = _li_rows(zf, "Profile.csv")
+        p = prof[0] if prof else {}
+        out.append("CONTACT")
+        name = ("%s %s" % (p.get("first name", ""), p.get("last name", ""))).strip()
+        if name:
+            out.append(name)
+        if p.get("headline"):
+            out.append(p["headline"])
+        if p.get("geo location"):
+            out.append(p["geo location"])
+        emails = _li_rows(zf, "Email Addresses.csv")
+        primary = [e for e in emails if e.get("primary", "").lower() == "yes"] or emails
+        if primary and primary[0].get("email address"):
+            out.append(primary[0]["email address"])
+        phones = _li_rows(zf, "PhoneNumbers.csv")
+        if phones and phones[0].get("number"):
+            out.append(phones[0]["number"])
+        for w in (p.get("websites") or "").split(","):
+            w = w.strip().strip("[]")
+            if w:
+                out.append(w.split(":", 1)[-1].strip() if w.upper().startswith(("OTHER:", "PERSONAL:", "COMPANY:", "BLOG:", "PORTFOLIO:", "RSS:")) else w)
+        if p.get("summary"):
+            out.append("")
+            out.append("SUMMARY")
+            for ln in p["summary"].splitlines():
+                if ln.strip():
+                    out.append(ln.strip())
+        positions = _li_rows(zf, "Positions.csv")
+        if positions:
+            out.append("")
+            out.append("EXPERIENCE")
+            for r in positions:
+                head = ", ".join(x for x in (r.get("title"), r.get("company name"), r.get("location")) if x)
+                span = _li_span(r.get("started on"), r.get("finished on"))
+                out.append((head + " " + span).strip())
+                for ln in (r.get("description") or "").splitlines():
+                    if ln.strip():
+                        out.append(ln.strip())
+        edu = _li_rows(zf, "Education.csv")
+        if edu:
+            out.append("")
+            out.append("EDUCATION")
+            for r in edu:
+                head = ", ".join(x for x in (r.get("degree name"), r.get("school name")) if x)
+                span = _li_span(r.get("start date"), r.get("end date"))
+                out.append((head + " " + span).strip())
+                for key in ("notes", "activities"):
+                    for ln in (r.get(key) or "").splitlines():
+                        if ln.strip():
+                            out.append(ln.strip())
+        skills = [r.get("name") for r in _li_rows(zf, "Skills.csv") if r.get("name")]
+        if skills:
+            out.append("")
+            out.append("SKILLS")
+            for i in range(0, len(skills), 8):
+                out.append(", ".join(skills[i:i + 8]))
+        certs = _li_rows(zf, "Certifications.csv")
+        if certs:
+            out.append("")
+            out.append("CERTIFICATIONS")
+            for r in certs:
+                head = ", ".join(x for x in (r.get("name"), r.get("authority")) if x)
+                span = _li_span(r.get("started on"), r.get("finished on"), ongoing="")
+                out.append((head + " " + span).strip())
+        other = []
+        for r in _li_rows(zf, "Projects.csv"):
+            head = "Project: " + ", ".join(x for x in (r.get("title"),) if x)
+            other.append((head + " " + _li_span(r.get("started on"), r.get("finished on"))).strip())
+            for ln in (r.get("description") or "").splitlines():
+                if ln.strip():
+                    other.append(ln.strip())
+        for r in _li_rows(zf, "Volunteering.csv"):
+            head = "Volunteering: " + ", ".join(x for x in (r.get("role"), r.get("company name"), r.get("cause")) if x)
+            other.append((head + " " + _li_span(r.get("started on"), r.get("finished on"))).strip())
+            for ln in (r.get("description") or "").splitlines():
+                if ln.strip():
+                    other.append(ln.strip())
+        langs = [", ".join(x for x in (r.get("name"), r.get("proficiency")) if x) for r in _li_rows(zf, "Languages.csv") if r.get("name")]
+        if langs:
+            other.append("Languages: " + "; ".join(langs))
+        for r in _li_rows(zf, "Honors.csv"):
+            if r.get("title"):
+                other.append("Honour: " + r["title"] + (" " + _li_span(r.get("issued on"), "") if r.get("issued on") else ""))
+        for r in _li_rows(zf, "Publications.csv"):
+            if r.get("name"):
+                other.append("Publication: " + r["name"] + ((", " + r["publisher"]) if r.get("publisher") else ""))
+        if other:
+            out.append("")
+            out.append("OTHER")
+            out.extend(other)
+    text = "\n".join(out)
+    pages = max(1, (len(text) + DOCX_CHARS_PER_PAGE - 1) // DOCX_CHARS_PER_PAGE)
+    return text, pages
+
+
 def _read_any(data):
     """Shared detection and extraction. Returns (kind, text, pages) or raises
     ValueError with a short reason the caller maps to a status."""
     if not data or len(data) < 8:
         raise ValueError("empty")
     if data[:4] == b"PK\x03\x04":
-        kind = "docx"
+        kind = _zip_kind(data)
+        if kind == "unknown":
+            raise ValueError("type")
     elif data[:5] == b"%PDF-":
         kind = "pdf"
     else:
@@ -105,6 +276,8 @@ def _read_any(data):
         if not _docx_available():
             raise ValueError("nodocx")
         text, pages = _extract_docx(data)
+    elif kind == "linkedin":
+        text, pages = _extract_linkedin(data)
     else:
         if not _pdf_available():
             raise ValueError("nopdf")
@@ -189,25 +362,18 @@ def extract():
     if not data or len(data) < 8:
         return jsonify({"ok": False, "error": "file body required"}), 400
 
-    if data[:4] == b"PK\x03\x04":
-        kind = "docx"
-    elif data[:5] == b"%PDF-":
-        kind = "pdf"
-    else:
-        return jsonify({"ok": False,
-                        "error": "unsupported file type, docx or pdf only"}), 415
-
     try:
-        if kind == "docx":
-            if not _docx_available():
-                return jsonify({"ok": False,
-                                "error": "docx support not installed"}), 503
-            text, pages = _extract_docx(data)
-        else:
-            if not _pdf_available():
-                return jsonify({"ok": False,
-                                "error": "pdf support not installed"}), 503
-            text, pages = _extract_pdf(data)
+        kind, text, pages = _read_any(data)
+    except ValueError as exc:
+        reason = str(exc)
+        if reason == "type":
+            return jsonify({"ok": False,
+                            "error": "unsupported file type, docx, pdf or LinkedIn export zip only"}), 415
+        if reason == "nodocx":
+            return jsonify({"ok": False, "error": "docx support not installed"}), 503
+        if reason == "nopdf":
+            return jsonify({"ok": False, "error": "pdf support not installed"}), 503
+        return jsonify({"ok": False, "error": "file body required"}), 400
     except Exception as exc:  # unreadable or corrupt file
         return jsonify({"ok": False,
                         "error": "file could not be read: %s" % exc.__class__.__name__}), 422
@@ -258,7 +424,7 @@ def extract_check():
     except ValueError as exc:
         reason = str(exc)
         if reason == "type":
-            msg = "This file type could not be read. Please upload a PDF or Word document."
+            msg = "This file type could not be read. Please upload a PDF, a Word document, or your LinkedIn data export ZIP."
             code = 415
         elif reason in ("nodocx", "nopdf"):
             msg = "The reader is unavailable at the moment. Please try again shortly."
@@ -285,13 +451,19 @@ def extract_check():
             break
         preview.append(ln)
         used += len(ln)
-    if scanned:
+    if kind == "linkedin" and len(lines) < 3:
+        readable = False
+        message = ("The LinkedIn export opened but held almost no profile content. "
+                   "Please request the full data archive from LinkedIn and upload that ZIP.")
+    elif scanned:
         message = ("This looks like a scanned image rather than a text document. "
                    "Role Scout cannot read the lines yet. Please upload the original file.")
     elif too_long:
         message = "This file is longer than fifteen pages. Please upload a shorter version."
     elif not lines:
         message = "The file opened but no text was found inside it."
+    elif kind == "linkedin":
+        message = "Role Scout can read this LinkedIn export."
     else:
         message = "Role Scout can read this file."
     return _with_check_cors(jsonify({
