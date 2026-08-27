@@ -8,6 +8,7 @@ GET  /export/resume/health -> reports pdf and docx renderer availability
 Contract (JSON body):
 {
   "format": "pdf" | "docx",
+  "template": "classic" | "compact" | "plain",   optional, default classic
   "seeker_name": "Full Name",
   "contact_lines": ["optional strings under the name"],
   "posting": {"title": "...", "employer": "...", "location": "..."},
@@ -22,9 +23,12 @@ line renders at the end of the document; when either is absent the
 document renders with no footer, so the caller controls inclusion.
 
 Output is deliberately ATS shaped: one column, standard fonts, plain
-uppercase section headings, no tables, no graphics. The content arrives
-already verified by the tailor lane, so this module renders mechanically
-and applies no content gates.
+uppercase section headings, no tables, no graphics. Three templates share
+that shape and differ only in type size, spacing and colour: classic (the
+original), compact (tighter, for long resumes that should fit two pages),
+and plain (Times, black only, the most conservative parse). The content
+arrives already verified by the tailor lane, so this module renders
+mechanically and applies no content gates.
 
 CORS: the Role Scout app in the browser calls this route directly, so
 the blueprint answers OPTIONS preflights and sends open CORS headers on
@@ -46,8 +50,47 @@ _CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Expose-Headers": "Content-Disposition",
     "Access-Control-Max-Age": "86400",
 }
+
+
+# Template parameters. Every template is one column with plain uppercase
+# section headings and no tables, so all three parse the same way; they differ
+# in type size, spacing and colour only. pdf_font is the reportlab base font
+# name, docx_font the Word font name.
+_TEMPLATES = {
+    "classic": {
+        "pdf_font": "Helvetica", "docx_font": "Calibri",
+        "name": 18, "contact": 9.5, "section": 11.5, "heading": 10.5, "body": 10,
+        "footer": 8, "section_before": 13, "section_after": 4, "heading_before": 8,
+        "body_after": 2, "leading_ratio": 1.4, "section_color": "#1F2A44",
+        "margin_x": 0.9, "margin_y": 0.7,
+    },
+    "compact": {
+        "pdf_font": "Helvetica", "docx_font": "Calibri",
+        "name": 16, "contact": 9, "section": 10.5, "heading": 10, "body": 9.5,
+        "footer": 7.5, "section_before": 9, "section_after": 2, "heading_before": 5,
+        "body_after": 1, "leading_ratio": 1.3, "section_color": "#1F2A44",
+        "margin_x": 0.75, "margin_y": 0.6,
+    },
+    "plain": {
+        "pdf_font": "Times-Roman", "docx_font": "Times New Roman",
+        "name": 16, "contact": 10, "section": 11, "heading": 11, "body": 10.5,
+        "footer": 8, "section_before": 12, "section_after": 3, "heading_before": 7,
+        "body_after": 2, "leading_ratio": 1.35, "section_color": "#000000",
+        "margin_x": 1.0, "margin_y": 0.8,
+    },
+}
+
+
+def _template(payload):
+    return _TEMPLATES.get(payload.get("template") or "classic", _TEMPLATES["classic"])
+
+
+def _pdf_bold(base):
+    """Maps a reportlab base font to its bold face."""
+    return "Times-Bold" if base == "Times-Roman" else "Helvetica-Bold"
 
 
 @export_bp.after_request
@@ -136,6 +179,7 @@ def _read_payload(req):
     posting = data.get("posting") if isinstance(data.get("posting"), dict) else {}
     payload = {
         "format": str(data.get("format") or "pdf").strip().lower(),
+        "template": str(data.get("template") or "classic").strip().lower(),
         "seeker_name": str(data.get("seeker_name") or "").strip(),
         "contact_lines": [str(x).strip() for x in (data.get("contact_lines") or [])
                           if str(x).strip()],
@@ -148,6 +192,8 @@ def _read_payload(req):
     }
     if payload["format"] not in ("pdf", "docx"):
         return None, _err("format must be pdf or docx", 422)
+    if payload["template"] not in _TEMPLATES:
+        return None, _err("template must be classic, compact or plain", 422)
     return payload, None
 
 
@@ -173,26 +219,31 @@ def _render_pdf(payload):
     from reportlab.platypus import SimpleDocTemplate, Paragraph
     from xml.sax.saxutils import escape
 
+    t = _template(payload)
+    base, bold = t["pdf_font"], _pdf_bold(t["pdf_font"])
+    lr = t["leading_ratio"]
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter,
-                            leftMargin=0.9 * inch, rightMargin=0.9 * inch,
-                            topMargin=0.7 * inch, bottomMargin=0.7 * inch,
+                            leftMargin=t["margin_x"] * inch, rightMargin=t["margin_x"] * inch,
+                            topMargin=t["margin_y"] * inch, bottomMargin=t["margin_y"] * inch,
                             title=payload["seeker_name"] or "Resume")
-    name_style = ParagraphStyle("name", fontName="Helvetica-Bold", fontSize=18,
-                                leading=22, alignment=TA_LEFT, spaceAfter=2)
-    contact_style = ParagraphStyle("contact", fontName="Helvetica", fontSize=9.5,
-                                   leading=13, spaceAfter=1)
-    section_style = ParagraphStyle("section", fontName="Helvetica-Bold",
-                                   fontSize=11.5, leading=15, spaceBefore=13,
-                                   spaceAfter=4, textColor="#1F2A44")
-    heading_style = ParagraphStyle("subhead", fontName="Helvetica-Bold",
-                                   fontSize=10.5, leading=14, spaceBefore=8,
-                                   spaceAfter=1)
-    bullet_style = ParagraphStyle("bullet", fontName="Helvetica", fontSize=10,
-                                  leading=14, leftIndent=14, bulletIndent=2,
-                                  spaceAfter=2)
-    footer_style = ParagraphStyle("footer", fontName="Helvetica", fontSize=8,
-                                  leading=11, textColor="#555555", spaceBefore=14)
+    name_style = ParagraphStyle("name", fontName=bold, fontSize=t["name"],
+                                leading=round(t["name"] * 1.2), alignment=TA_LEFT, spaceAfter=2)
+    contact_style = ParagraphStyle("contact", fontName=base, fontSize=t["contact"],
+                                   leading=round(t["contact"] * lr), spaceAfter=1)
+    section_style = ParagraphStyle("section", fontName=bold,
+                                   fontSize=t["section"], leading=round(t["section"] * 1.3),
+                                   spaceBefore=t["section_before"],
+                                   spaceAfter=t["section_after"], textColor=t["section_color"])
+    heading_style = ParagraphStyle("subhead", fontName=bold,
+                                   fontSize=t["heading"], leading=round(t["heading"] * lr),
+                                   spaceBefore=t["heading_before"], spaceAfter=1)
+    bullet_style = ParagraphStyle("bullet", fontName=base, fontSize=t["body"],
+                                  leading=round(t["body"] * lr), leftIndent=14, bulletIndent=2,
+                                  spaceAfter=t["body_after"])
+    footer_style = ParagraphStyle("footer", fontName=base, fontSize=t["footer"],
+                                  leading=round(t["footer"] * lr), textColor="#555555",
+                                  spaceBefore=14)
 
     story = []
     if payload["seeker_name"]:
@@ -220,37 +271,36 @@ def _render_docx(payload):
     from docx import Document
     from docx.shared import Pt, RGBColor
 
+    t = _template(payload)
     d = Document()
+    d.styles["Normal"].font.name = t["docx_font"]
+    sec_rgb = RGBColor(int(t["section_color"][1:3], 16), int(t["section_color"][3:5], 16),
+                       int(t["section_color"][5:7], 16))
+
+    def _run(par, text, size, bold=False, color=None):
+        r = par.add_run(text)
+        r.font.name = t["docx_font"]
+        r.font.size = Pt(size)
+        r.bold = bold
+        if color is not None:
+            r.font.color.rgb = color
+        return r
+
     if payload["seeker_name"]:
-        p = d.add_paragraph()
-        run = p.add_run(payload["seeker_name"])
-        run.bold = True
-        run.font.size = Pt(18)
+        _run(d.add_paragraph(), payload["seeker_name"], t["name"], bold=True)
     for line in payload["contact_lines"]:
-        p = d.add_paragraph()
-        p.add_run(line).font.size = Pt(9.5)
+        _run(d.add_paragraph(), line, t["contact"])
     for sec in payload["sections"]:
         if sec["title"]:
-            p = d.add_paragraph()
-            run = p.add_run(sec["title"].upper())
-            run.bold = True
-            run.font.size = Pt(11.5)
-            run.font.color.rgb = RGBColor(0x1F, 0x2A, 0x44)
+            _run(d.add_paragraph(), sec["title"].upper(), t["section"], bold=True, color=sec_rgb)
         for item in sec["lines"]:
             if item["heading"]:
-                p = d.add_paragraph()
-                run = p.add_run(item["text"])
-                run.bold = True
-                run.font.size = Pt(10.5)
+                _run(d.add_paragraph(), item["text"], t["heading"], bold=True)
             else:
-                p = d.add_paragraph(style="List Bullet")
-                p.add_run(item["text"]).font.size = Pt(10)
+                _run(d.add_paragraph(style="List Bullet"), item["text"], t["body"])
     footer = _footer_line(payload)
     if footer:
-        p = d.add_paragraph()
-        run = p.add_run(footer)
-        run.font.size = Pt(8)
-        run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+        _run(d.add_paragraph(), footer, t["footer"], color=RGBColor(0x55, 0x55, 0x55))
     buf = BytesIO()
     d.save(buf)
     buf.seek(0)
@@ -260,7 +310,7 @@ def _render_docx(payload):
 @export_bp.route("/export/resume/health", methods=["GET"])
 def export_health():
     body = {"ok": True, "pdf": _pdf_ready(), "docx": _docx_ready(),
-            "version": "v1.1"}
+            "templates": sorted(_TEMPLATES.keys()), "version": "v1.2"}
     return Response(_json.dumps(body), mimetype="application/json")
 
 
