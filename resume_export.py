@@ -3,7 +3,7 @@ Role Scout resume export (added Jul 2026, verification link build)
 ==================================================================
 POST /export/resume        -> renders a verified tailored resume as a
                               downloadable PDF or Word document (binary)
-GET  /export/resume/health -> reports pdf and docx renderer availability
+GET  /export/resume/health -> reports pdf, docx and qr renderer availability
 
 Contract (JSON body):
 {
@@ -14,7 +14,8 @@ Contract (JSON body):
   "posting": {"title": "...", "employer": "...", "location": "..."},
   "sections": [{"title": "SUMMARY", "lines": ["...", "..."]}],
   "verified_at": "2026-07-28",       optional
-  "attested_version": 2              optional
+  "attested_version": 2,             optional
+  "verify_url": "https://.../verify/abc123"   optional
 }
 
 sections is the only required content field. When verified_at and
@@ -22,9 +23,20 @@ attested_version are both present, a single quiet verification footer
 line renders at the end of the document; when either is absent the
 document renders with no footer, so the caller controls inclusion.
 
+When the footer renders AND verify_url is present, a small QR code
+linking to that URL renders directly beneath the footer line, captioned
+"Scan to verify". The QR is intentionally gated behind the same
+verified_at and attested_version facts as the footer text, not on
+verify_url alone, so a document can never carry a scannable link to a
+verification page without the printed sentence that explains what the
+scan confirms. If the qr rendering dependency is unavailable, or code
+generation fails for any reason, the document still renders in full
+with the footer text alone; QR is additive and never blocks export.
+
 Output is deliberately ATS shaped: one column, standard fonts, plain
-uppercase section headings, no tables, no graphics. Three templates share
-that shape and differ only in type size, spacing and colour: classic (the
+uppercase section headings, no tables, no graphics other than the
+optional verification QR described above. Three templates share that
+shape and differ only in type size, spacing and colour: classic (the
 original), compact (tighter, for long resumes that should fit two pages),
 and plain (Times, black only, the most conservative parse). The content
 arrives already verified by the tailor lane, so this module renders
@@ -35,7 +47,8 @@ the blueprint answers OPTIONS preflights and sends open CORS headers on
 its responses. The route holds no secrets and writes nothing.
 
 Lazy imports per the resume_extract pattern: a missing dependency
-degrades to a 503 on this route instead of breaking the app at import.
+degrades to a 503 on this route instead of breaking the app at import
+(pdf, docx), or degrades to a silently omitted QR (qr, additive only).
 Stateless, no worker memory.
 """
 
@@ -116,6 +129,34 @@ def _docx_ready():
         return False
 
 
+def _qr_ready():
+    try:
+        import qrcode  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _generate_qr_png(url):
+    """Builds a small QR code PNG in memory for the given URL.
+
+    Returns a BytesIO positioned at 0, or None on any failure (missing
+    dependency, bad url, encoding error). QR is additive, so a failure
+    here must never break the surrounding document render.
+    """
+    if not url:
+        return None
+    try:
+        import qrcode
+        img = qrcode.make(url, box_size=6, border=2)
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return buf
+    except Exception:
+        return None
+
+
 def _err(msg, status):
     return Response(_json.dumps({"error": msg}), status=status,
                     mimetype="application/json")
@@ -189,6 +230,7 @@ def _read_payload(req):
         "sections": clean_sections,
         "verified_at": str(data.get("verified_at") or "").strip(),
         "attested_version": data.get("attested_version"),
+        "verify_url": str(data.get("verify_url") or "").strip(),
     }
     if payload["format"] not in ("pdf", "docx"):
         return None, _err("format must be pdf or docx", 422)
@@ -215,8 +257,8 @@ def _render_pdf(payload):
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import inch
-    from reportlab.lib.enums import TA_LEFT
-    from reportlab.platypus import SimpleDocTemplate, Paragraph
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Image, Spacer
     from xml.sax.saxutils import escape
 
     t = _template(payload)
@@ -244,6 +286,9 @@ def _render_pdf(payload):
     footer_style = ParagraphStyle("footer", fontName=base, fontSize=t["footer"],
                                   leading=round(t["footer"] * lr), textColor="#555555",
                                   spaceBefore=14)
+    qr_caption_style = ParagraphStyle("qrcaption", fontName=base, fontSize=t["footer"],
+                                      leading=round(t["footer"] * lr), textColor="#555555",
+                                      alignment=TA_CENTER, spaceBefore=3)
 
     story = []
     if payload["seeker_name"]:
@@ -262,6 +307,14 @@ def _render_pdf(payload):
     footer = _footer_line(payload)
     if footer:
         story.append(Paragraph(escape(footer), footer_style))
+        qr_buf = _generate_qr_png(payload.get("verify_url")) if _qr_ready() else None
+        if qr_buf is not None:
+            qr_size = 0.85 * inch
+            qr_img = Image(qr_buf, width=qr_size, height=qr_size)
+            qr_img.hAlign = "CENTER"
+            story.append(Spacer(1, 6))
+            story.append(qr_img)
+            story.append(Paragraph(escape("Scan to verify"), qr_caption_style))
     doc.build(story)
     buf.seek(0)
     return buf
@@ -269,7 +322,8 @@ def _render_pdf(payload):
 
 def _render_docx(payload):
     from docx import Document
-    from docx.shared import Pt, RGBColor
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     t = _template(payload)
     d = Document()
@@ -301,6 +355,14 @@ def _render_docx(payload):
     footer = _footer_line(payload)
     if footer:
         _run(d.add_paragraph(), footer, t["footer"], color=RGBColor(0x55, 0x55, 0x55))
+        qr_buf = _generate_qr_png(payload.get("verify_url")) if _qr_ready() else None
+        if qr_buf is not None:
+            qr_par = d.add_paragraph()
+            qr_par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            qr_par.add_run().add_picture(qr_buf, width=Inches(0.85))
+            caption_par = d.add_paragraph()
+            caption_par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _run(caption_par, "Scan to verify", t["footer"], color=RGBColor(0x55, 0x55, 0x55))
     buf = BytesIO()
     d.save(buf)
     buf.seek(0)
@@ -309,8 +371,8 @@ def _render_docx(payload):
 
 @export_bp.route("/export/resume/health", methods=["GET"])
 def export_health():
-    body = {"ok": True, "pdf": _pdf_ready(), "docx": _docx_ready(),
-            "templates": sorted(_TEMPLATES.keys()), "version": "v1.2"}
+    body = {"ok": True, "pdf": _pdf_ready(), "docx": _docx_ready(), "qr": _qr_ready(),
+            "templates": sorted(_TEMPLATES.keys()), "version": "v1.3"}
     return Response(_json.dumps(body), mimetype="application/json")
 
 
@@ -365,6 +427,8 @@ def export_resume():
 # footer renders only when verified_at and attested_version are both
 # present, so the caller controls inclusion. Same blueprint, so the CORS
 # handling, the readiness checks, and app.py registration are all reused.
+# The cover letter export does not carry the QR code; that stays scoped
+# to the resume export where the verification claim is strongest.
 
 _COVER_FOOTER_TEMPLATE = ("Verified by Role Scout against Version {v} of the "
                           "attested source resume on {d}. Every claim traces to "
