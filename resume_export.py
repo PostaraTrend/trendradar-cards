@@ -25,13 +25,17 @@ document renders with no footer, so the caller controls inclusion.
 
 When the footer renders AND verify_url is present, a small QR code
 linking to that URL renders directly beneath the footer line, captioned
-"Scan to verify". The QR is intentionally gated behind the same
-verified_at and attested_version facts as the footer text, not on
-verify_url alone, so a document can never carry a scannable link to a
-verification page without the printed sentence that explains what the
-scan confirms. If the qr rendering dependency is unavailable, or code
-generation fails for any reason, the document still renders in full
-with the footer text alone; QR is additive and never blocks export.
+"Scan before you call. Confirm this resume was not altered from the
+candidate's verified source." The caption names the moment a recruiter
+is actually in (right before deciding whether to call the candidate)
+rather than only describing the mechanism, so the code is more likely to
+get used. The QR is intentionally gated behind the same verified_at and
+attested_version facts as the footer text, not on verify_url alone, so a
+document can never carry a scannable link to a verification page without
+the printed sentence that explains what the scan confirms. If the qr
+rendering dependency is unavailable, or code generation fails for any
+reason, the document still renders in full with the footer text alone;
+QR is additive and never blocks export.
 
 Output is deliberately ATS shaped: one column, standard fonts, plain
 uppercase section headings, no tables, no graphics other than the
@@ -95,6 +99,13 @@ _TEMPLATES = {
         "margin_x": 1.0, "margin_y": 0.8,
     },
 }
+
+# The line printed beneath the verification QR on both export formats. It
+# names the moment the recruiter is in (right before deciding whether to
+# call the candidate) so the code is more likely to get scanned, not just
+# noticed.
+_QR_CAPTION = ("Scan before you call. Confirm this resume was not altered "
+               "from the candidate's verified source.")
 
 
 def _template(payload):
@@ -314,7 +325,7 @@ def _render_pdf(payload):
             qr_img.hAlign = "CENTER"
             story.append(Spacer(1, 6))
             story.append(qr_img)
-            story.append(Paragraph(escape("Scan to verify"), qr_caption_style))
+            story.append(Paragraph(escape(_QR_CAPTION), qr_caption_style))
     doc.build(story)
     buf.seek(0)
     return buf
@@ -362,7 +373,7 @@ def _render_docx(payload):
             qr_par.add_run().add_picture(qr_buf, width=Inches(0.85))
             caption_par = d.add_paragraph()
             caption_par.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            _run(caption_par, "Scan to verify", t["footer"], color=RGBColor(0x55, 0x55, 0x55))
+            _run(caption_par, _QR_CAPTION, t["footer"], color=RGBColor(0x55, 0x55, 0x55))
     buf = BytesIO()
     d.save(buf)
     buf.seek(0)
@@ -372,7 +383,7 @@ def _render_docx(payload):
 @export_bp.route("/export/resume/health", methods=["GET"])
 def export_health():
     body = {"ok": True, "pdf": _pdf_ready(), "docx": _docx_ready(), "qr": _qr_ready(),
-            "templates": sorted(_TEMPLATES.keys()), "version": "v1.3"}
+            "templates": sorted(_TEMPLATES.keys()), "version": "v1.4"}
     return Response(_json.dumps(body), mimetype="application/json")
 
 
