@@ -295,10 +295,10 @@ def _render_pdf(payload):
                                   leading=round(t["body"] * lr), leftIndent=14, bulletIndent=2,
                                   spaceAfter=t["body_after"])
     footer_style = ParagraphStyle("footer", fontName=base, fontSize=t["footer"],
-                                  leading=round(t["footer"] * lr), textColor="#555555",
+                                  leading=round(t["footer"] * lr), textColor="#000000" if payload.get("template") == "plain" else "#555555",
                                   spaceBefore=14)
     qr_caption_style = ParagraphStyle("qrcaption", fontName=base, fontSize=t["footer"],
-                                      leading=round(t["footer"] * lr), textColor="#555555",
+                                      leading=round(t["footer"] * lr), textColor="#000000" if payload.get("template") == "plain" else "#555555",
                                       alignment=TA_CENTER, spaceBefore=3)
 
     story = []
@@ -331,6 +331,22 @@ def _render_pdf(payload):
     return buf
 
 
+def _apply_docx_layout(document, template):
+    from docx.shared import Inches, Pt
+
+    for section in document.sections:
+        section.page_width = Inches(8.5)
+        section.page_height = Inches(11)
+        section.left_margin = section.right_margin = Inches(template["margin_x"])
+        section.top_margin = section.bottom_margin = Inches(template["margin_y"])
+    for name in ("Normal", "List Bullet"):
+        style = document.styles[name]
+        style.font.name = template["docx_font"]
+        style.font.size = Pt(template["body"])
+        style.paragraph_format.line_spacing = template["leading_ratio"]
+        style.paragraph_format.space_after = Pt(template["body_after"])
+
+
 def _render_docx(payload):
     from docx import Document
     from docx.shared import Pt, RGBColor, Inches
@@ -338,7 +354,7 @@ def _render_docx(payload):
 
     t = _template(payload)
     d = Document()
-    d.styles["Normal"].font.name = t["docx_font"]
+    _apply_docx_layout(d, t)
     sec_rgb = RGBColor(int(t["section_color"][1:3], 16), int(t["section_color"][3:5], 16),
                        int(t["section_color"][5:7], 16))
 
@@ -352,20 +368,35 @@ def _render_docx(payload):
         return r
 
     if payload["seeker_name"]:
-        _run(d.add_paragraph(), payload["seeker_name"], t["name"], bold=True)
+        p = d.add_paragraph()
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.line_spacing = 1.2
+        p.paragraph_format.keep_with_next = True
+        _run(p, payload["seeker_name"], t["name"], bold=True)
     for line in payload["contact_lines"]:
-        _run(d.add_paragraph(), line, t["contact"])
+        p = d.add_paragraph()
+        p.paragraph_format.space_after = Pt(1)
+        p.paragraph_format.keep_with_next = True
+        _run(p, line, t["contact"])
     for sec in payload["sections"]:
         if sec["title"]:
-            _run(d.add_paragraph(), sec["title"].upper(), t["section"], bold=True, color=sec_rgb)
+            p = d.add_paragraph()
+            p.paragraph_format.space_before = Pt(t["section_before"])
+            p.paragraph_format.space_after = Pt(t["section_after"])
+            p.paragraph_format.keep_with_next = True
+            _run(p, sec["title"].upper(), t["section"], bold=True, color=sec_rgb)
         for item in sec["lines"]:
             if item["heading"]:
-                _run(d.add_paragraph(), item["text"], t["heading"], bold=True)
+                p = d.add_paragraph()
+                p.paragraph_format.space_before = Pt(t["heading_before"])
+                p.paragraph_format.space_after = Pt(1)
+                p.paragraph_format.keep_with_next = True
+                _run(p, item["text"], t["heading"], bold=True)
             else:
                 _run(d.add_paragraph(style="List Bullet"), item["text"], t["body"])
     footer = _footer_line(payload)
     if footer:
-        _run(d.add_paragraph(), footer, t["footer"], color=RGBColor(0x55, 0x55, 0x55))
+        _run(d.add_paragraph(), footer, t["footer"], color=RGBColor(0, 0, 0) if payload.get("template") == "plain" else RGBColor(0x55, 0x55, 0x55))
         qr_buf = _generate_qr_png(payload.get("verify_url")) if _qr_ready() else None
         if qr_buf is not None:
             qr_par = d.add_paragraph()
@@ -373,7 +404,7 @@ def _render_docx(payload):
             qr_par.add_run().add_picture(qr_buf, width=Inches(0.85))
             caption_par = d.add_paragraph()
             caption_par.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            _run(caption_par, _QR_CAPTION, t["footer"], color=RGBColor(0x55, 0x55, 0x55))
+            _run(caption_par, _QR_CAPTION, t["footer"], color=RGBColor(0, 0, 0) if payload.get("template") == "plain" else RGBColor(0x55, 0x55, 0x55))
     buf = BytesIO()
     d.save(buf)
     buf.seek(0)
@@ -383,7 +414,7 @@ def _render_docx(payload):
 @export_bp.route("/export/resume/health", methods=["GET"])
 def export_health():
     body = {"ok": True, "pdf": _pdf_ready(), "docx": _docx_ready(), "qr": _qr_ready(),
-            "templates": sorted(_TEMPLATES.keys()), "version": "v1.4"}
+            "templates": sorted(_TEMPLATES.keys()), "version": "v1.5"}
     return Response(_json.dumps(body), mimetype="application/json")
 
 
@@ -421,6 +452,7 @@ def export_resume():
 # Contract (JSON body):
 # {
 #   "format": "pdf" | "docx",
+#   "template": "classic" | "compact" | "plain", optional, default classic
 #   "seeker_name": "Full Name",
 #   "contact_lines": ["email", "phone", "city"],   verified contact block
 #   "posting": {"title": "...", "employer": "...", "location": "..."},
@@ -483,6 +515,7 @@ def _read_cover_payload(req):
     posting = data.get("posting") if isinstance(data.get("posting"), dict) else {}
     payload = {
         "format": str(data.get("format") or "pdf").strip().lower(),
+        "template": str(data.get("template") or "classic").strip().lower(),
         "seeker_name": str(data.get("seeker_name") or "").strip(),
         "contact_lines": [str(x).strip() for x in (data.get("contact_lines") or [])
                           if str(x).strip()],
@@ -497,6 +530,8 @@ def _read_cover_payload(req):
     }
     if payload["format"] not in ("pdf", "docx"):
         return None, _err("format must be pdf or docx", 422)
+    if payload["template"] not in _TEMPLATES:
+        return None, _err("template must be classic, compact or plain", 422)
     return payload, None
 
 
@@ -508,23 +543,26 @@ def _render_cover_pdf(payload):
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
     from xml.sax.saxutils import escape
 
+    t = _template(payload)
+    base, bold = t["pdf_font"], _pdf_bold(t["pdf_font"])
+    lr = t["leading_ratio"]
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter,
-                            leftMargin=1.0 * inch, rightMargin=1.0 * inch,
-                            topMargin=0.9 * inch, bottomMargin=0.9 * inch,
+                            leftMargin=t["margin_x"] * inch, rightMargin=t["margin_x"] * inch,
+                            topMargin=t["margin_y"] * inch, bottomMargin=t["margin_y"] * inch,
                             title=payload["seeker_name"] or "Cover Letter")
-    name_style = ParagraphStyle("cname", fontName="Helvetica-Bold", fontSize=14,
-                                leading=18, alignment=TA_LEFT)
-    contact_style = ParagraphStyle("ccontact", fontName="Helvetica", fontSize=9.5,
-                                   leading=13)
-    meta_style = ParagraphStyle("cmeta", fontName="Helvetica", fontSize=10,
-                                leading=14)
-    body_style = ParagraphStyle("cbody", fontName="Helvetica", fontSize=10.5,
-                                leading=15, spaceAfter=8)
-    sig_style = ParagraphStyle("csig", fontName="Helvetica", fontSize=10.5,
-                               leading=15)
-    footer_style = ParagraphStyle("cfooter", fontName="Helvetica", fontSize=8,
-                                  leading=11, textColor="#555555", spaceBefore=16)
+    name_style = ParagraphStyle("cname", fontName=bold, fontSize=t["name"],
+                                leading=round(t["name"] * 1.2), alignment=TA_LEFT, spaceAfter=2)
+    contact_style = ParagraphStyle("ccontact", fontName=base, fontSize=t["contact"],
+                                   leading=round(t["contact"] * lr), spaceAfter=1)
+    meta_style = ParagraphStyle("cmeta", fontName=base, fontSize=t["body"],
+                                leading=round(t["body"] * lr))
+    body_style = ParagraphStyle("cbody", fontName=base, fontSize=t["body"],
+                                leading=round(t["body"] * lr), spaceAfter=t["heading_before"])
+    sig_style = ParagraphStyle("csig", fontName=base, fontSize=t["body"],
+                               leading=round(t["body"] * lr))
+    footer_style = ParagraphStyle("cfooter", fontName=base, fontSize=t["footer"],
+                                  leading=round(t["footer"] * lr), textColor="#000000" if payload.get("template") == "plain" else "#555555", spaceBefore=16)
 
     story = []
     if payload["seeker_name"]:
@@ -560,42 +598,51 @@ def _render_cover_docx(payload):
     from docx import Document
     from docx.shared import Pt, RGBColor
 
+    t = _template(payload)
     d = Document()
+    _apply_docx_layout(d, t)
     if payload["seeker_name"]:
         p = d.add_paragraph()
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.line_spacing = 1.2
+        p.paragraph_format.keep_with_next = True
         run = p.add_run(payload["seeker_name"])
         run.bold = True
-        run.font.size = Pt(14)
+        run.font.size = Pt(t["name"])
     for line in payload["contact_lines"]:
         p = d.add_paragraph()
-        p.add_run(line).font.size = Pt(9.5)
+        p.paragraph_format.space_after = Pt(1)
+        p.paragraph_format.keep_with_next = True
+        p.add_run(line).font.size = Pt(t["contact"])
     if payload["date"]:
         d.add_paragraph()
         p = d.add_paragraph()
-        p.add_run(payload["date"]).font.size = Pt(10)
+        p.add_run(payload["date"]).font.size = Pt(t["body"])
     if payload["recipient"]:
         if payload["posting_title"]:
             p = d.add_paragraph()
-            p.add_run("Re: " + payload["posting_title"]).font.size = Pt(10)
+            p.add_run("Re: " + payload["posting_title"]).font.size = Pt(t["body"])
         recip_line = ", ".join(b for b in [payload["posting_employer"],
                                            payload["posting_location"]] if b)
         if recip_line:
             p = d.add_paragraph()
-            p.add_run(recip_line).font.size = Pt(10)
+            p.add_run(recip_line).font.size = Pt(t["body"])
     d.add_paragraph()
     for para in _letter_paragraphs(payload["body"]):
         p = d.add_paragraph()
-        p.add_run(para).font.size = Pt(10.5)
+        p.paragraph_format.space_after = Pt(t["heading_before"])
+        p.add_run(para).font.size = Pt(t["body"])
     if payload["seeker_name"]:
         d.add_paragraph()
         p = d.add_paragraph()
-        p.add_run(payload["seeker_name"]).font.size = Pt(10.5)
+        p.add_run(payload["seeker_name"]).font.size = Pt(t["body"])
     footer = _cover_footer_line(payload)
     if footer:
         p = d.add_paragraph()
+        p.paragraph_format.space_before = Pt(16)
         run = p.add_run(footer)
-        run.font.size = Pt(8)
-        run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+        run.font.size = Pt(t["footer"])
+        run.font.color.rgb = RGBColor(0, 0, 0) if payload.get("template") == "plain" else RGBColor(0x55, 0x55, 0x55)
     buf = BytesIO()
     d.save(buf)
     buf.seek(0)
@@ -605,7 +652,7 @@ def _render_cover_docx(payload):
 @export_bp.route("/export/cover/health", methods=["GET"])
 def export_cover_health():
     body = {"ok": True, "pdf": _pdf_ready(), "docx": _docx_ready(),
-            "version": "v1.0", "kind": "cover"}
+            "version": "v1.1", "kind": "cover", "templates": sorted(_TEMPLATES.keys())}
     return Response(_json.dumps(body), mimetype="application/json")
 
 
