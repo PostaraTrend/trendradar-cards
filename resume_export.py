@@ -112,6 +112,34 @@ def _template(payload):
     return _TEMPLATES.get(payload.get("template") or "classic", _TEMPLATES["classic"])
 
 
+_DOCUMENT_LANGUAGES = {"en": "en-CA", "en-ca": "en-CA", "fr": "fr-CA",
+                       "fr-ca": "fr-CA", "es": "es-419", "es-419": "es-419"}
+_SUBJECT_LABELS = {"en-CA": "Re: ", "fr-CA": "Objet : ", "es-419": "Asunto: "}
+
+
+def _document_language(data):
+    """Only supported language tags control renderer labels and document metadata."""
+    value = data.get("document_language", "en-CA")
+    if not isinstance(value, str):
+        return None
+    return _DOCUMENT_LANGUAGES.get(value.strip().lower())
+
+
+def _subject_line(payload):
+    return _SUBJECT_LABELS[payload.get("document_language", "en-CA")] + payload["posting_title"]
+
+
+def _set_word_language(document, language):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    properties = document.styles["Normal"].element.get_or_add_rPr()
+    tag = properties.find(qn("w:lang"))
+    if tag is None:
+        tag = OxmlElement("w:lang")
+        properties.append(tag)
+    tag.set(qn("w:val"), language)
+
+
 def _pdf_bold(base):
     """Maps a reportlab base font to its bold face."""
     return "Times-Bold" if base == "Times-Roman" else "Helvetica-Bold"
@@ -230,6 +258,7 @@ def _read_payload(req):
 
     posting = data.get("posting") if isinstance(data.get("posting"), dict) else {}
     payload = {
+        "document_language": _document_language(data),
         "format": str(data.get("format") or "pdf").strip().lower(),
         "template": str(data.get("template") or "classic").strip().lower(),
         "seeker_name": str(data.get("seeker_name") or "").strip(),
@@ -243,6 +272,8 @@ def _read_payload(req):
         "attested_version": data.get("attested_version"),
         "verify_url": str(data.get("verify_url") or "").strip(),
     }
+    if payload["document_language"] is None:
+        return None, _err("document_language must be en-CA, fr-CA or es-419", 422)
     if payload["format"] not in ("pdf", "docx"):
         return None, _err("format must be pdf or docx", 422)
     if payload["template"] not in _TEMPLATES:
@@ -279,7 +310,7 @@ def _render_pdf(payload):
     doc = SimpleDocTemplate(buf, pagesize=letter,
                             leftMargin=t["margin_x"] * inch, rightMargin=t["margin_x"] * inch,
                             topMargin=t["margin_y"] * inch, bottomMargin=t["margin_y"] * inch,
-                            title=payload["seeker_name"] or "Resume")
+                            title=payload["seeker_name"] or "Resume", lang=payload.get("document_language", "en-CA"))
     name_style = ParagraphStyle("name", fontName=bold, fontSize=t["name"],
                                 leading=round(t["name"] * 1.2), alignment=TA_LEFT, spaceAfter=2)
     contact_style = ParagraphStyle("contact", fontName=base, fontSize=t["contact"],
@@ -355,6 +386,7 @@ def _render_docx(payload):
     t = _template(payload)
     d = Document()
     _apply_docx_layout(d, t)
+    _set_word_language(d, payload.get("document_language", "en-CA"))
     sec_rgb = RGBColor(int(t["section_color"][1:3], 16), int(t["section_color"][3:5], 16),
                        int(t["section_color"][5:7], 16))
 
@@ -514,6 +546,7 @@ def _read_cover_payload(req):
 
     posting = data.get("posting") if isinstance(data.get("posting"), dict) else {}
     payload = {
+        "document_language": _document_language(data),
         "format": str(data.get("format") or "pdf").strip().lower(),
         "template": str(data.get("template") or "classic").strip().lower(),
         "seeker_name": str(data.get("seeker_name") or "").strip(),
@@ -528,6 +561,8 @@ def _read_cover_payload(req):
         "verified_at": str(data.get("verified_at") or "").strip(),
         "attested_version": data.get("attested_version"),
     }
+    if payload["document_language"] is None:
+        return None, _err("document_language must be en-CA, fr-CA or es-419", 422)
     if payload["format"] not in ("pdf", "docx"):
         return None, _err("format must be pdf or docx", 422)
     if payload["template"] not in _TEMPLATES:
@@ -550,7 +585,7 @@ def _render_cover_pdf(payload):
     doc = SimpleDocTemplate(buf, pagesize=letter,
                             leftMargin=t["margin_x"] * inch, rightMargin=t["margin_x"] * inch,
                             topMargin=t["margin_y"] * inch, bottomMargin=t["margin_y"] * inch,
-                            title=payload["seeker_name"] or "Cover Letter")
+                            title=payload["seeker_name"] or "Cover Letter", lang=payload.get("document_language", "en-CA"))
     name_style = ParagraphStyle("cname", fontName=bold, fontSize=t["name"],
                                 leading=round(t["name"] * 1.2), alignment=TA_LEFT, spaceAfter=2)
     contact_style = ParagraphStyle("ccontact", fontName=base, fontSize=t["contact"],
@@ -575,7 +610,7 @@ def _render_cover_pdf(payload):
         story.append(Spacer(1, 8))
     if payload["recipient"]:
         if payload["posting_title"]:
-            story.append(Paragraph(escape("Re: " + payload["posting_title"]), meta_style))
+            story.append(Paragraph(escape(_subject_line(payload)), meta_style))
         recip_line = ", ".join(b for b in [payload["posting_employer"],
                                            payload["posting_location"]] if b)
         if recip_line:
@@ -601,6 +636,7 @@ def _render_cover_docx(payload):
     t = _template(payload)
     d = Document()
     _apply_docx_layout(d, t)
+    _set_word_language(d, payload.get("document_language", "en-CA"))
     if payload["seeker_name"]:
         p = d.add_paragraph()
         p.paragraph_format.space_after = Pt(2)
@@ -621,7 +657,7 @@ def _render_cover_docx(payload):
     if payload["recipient"]:
         if payload["posting_title"]:
             p = d.add_paragraph()
-            p.add_run("Re: " + payload["posting_title"]).font.size = Pt(t["body"])
+            p.add_run(_subject_line(payload)).font.size = Pt(t["body"])
         recip_line = ", ".join(b for b in [payload["posting_employer"],
                                            payload["posting_location"]] if b)
         if recip_line:
