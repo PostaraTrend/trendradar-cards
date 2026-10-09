@@ -250,7 +250,7 @@ def _read_payload(req):
     return payload, None
 
 
-_FOOTER_TEMPLATE = ("Verified by Role Scout against Version {v} of the attested "
+_FOOTER_TEMPLATE = ("Verified by TraceScout against Version {v} of the attested "
                     "source resume on {d}. Every line traces to attested content. "
                     "Nothing was invented.")
 
@@ -473,7 +473,7 @@ def export_resume():
 # The cover letter export does not carry the QR code; that stays scoped
 # to the resume export where the verification claim is strongest.
 
-_COVER_FOOTER_TEMPLATE = ("Verified by Role Scout against Version {v} of the "
+_COVER_FOOTER_TEMPLATE = ("Verified by TraceScout against Version {v} of the "
                           "attested source resume on {d}. Every claim traces to "
                           "attested content. Nothing was invented.")
 
